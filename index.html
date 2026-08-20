@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#173f34">
+  <meta name="description" content="Find what you own and where it lives. A private home inventory backed by your Google Sheet and Drive.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="stuff">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com https://apis.google.com; style-src 'self'; img-src 'self' blob: data: https:; connect-src 'self' https://www.googleapis.com https://sheets.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://drive.usercontent.google.com; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://*.google.com https://*.googleusercontent.com; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; manifest-src 'self'">
+  <title>stuff — find what you own</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles/app.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+  <script type="module" src="src/main.js"></script>
+</head>
+<body>
+  <stuff-app></stuff-app>
+  <noscript>stuff needs JavaScript to connect to your Google Sheet.</noscript>
+</body>
+</html>

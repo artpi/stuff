@@ -1,0 +1,15 @@
+{
+  "name": "stuff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A no-build, Google Sheets-backed home inventory.",
+  "scripts": {
+    "start": "node scripts/dev-server.mjs",
+    "test": "node --test",
+    "check": "node scripts/check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

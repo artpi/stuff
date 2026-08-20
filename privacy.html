@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173f34">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>Privacy — stuff</title>
+  <link rel="icon" href="assets/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles/app.css">
+</head>
+<body class="document-page">
+  <main class="document-shell">
+    <a class="brand-link" href="./"><img src="assets/icons/icon.svg" alt="" width="36" height="36">stuff</a>
+    <h1>Privacy</h1>
+    <p class="lede">stuff is a static application. It has no application server, analytics, advertising, or account database of its own.</p>
+
+    <h2>Where your data lives</h2>
+    <p>Inventory records are stored in a Google Sheet in your Google Drive. Private photos are stored in folders beside that Sheet. Google file permissions control who can access them.</p>
+
+    <h2>Google access</h2>
+    <p>stuff asks for the per-file <code>drive.file</code> scope. This lets it access files it creates and files you explicitly choose with Google Picker; it does not grant access to all files in Drive.</p>
+
+    <h2>Remembering access</h2>
+    <p>By default, stuff stores Google's short-lived access token and exact expiration time in this browser's local storage so reopening the app is less disruptive. You can disable this option. A remembered token cannot be renewed by the static app and is removed before it expires, after an authorization rejection, or when you disconnect.</p>
+    <p>Any script that successfully executes on this website's origin could use a remembered token until it expires. stuff limits that risk with a restrictive Content Security Policy, no analytics or UI libraries, and text-only rendering of Sheet content. Do not use remembered access on a shared or untrusted device.</p>
+
+    <h2>Public image URLs</h2>
+    <p>If you add a public image URL, the browser requests that image directly from its host. The host can see network information such as your IP address. Public image content is not copied to Drive.</p>
+
+    <h2>Local device storage</h2>
+    <p>The browser stores the selected spreadsheet ID, interface preferences, the remember-access preference, and—only when enabled—the temporary Google token and expiration time. The service worker caches only the public application shell, never Google API responses, tokens, inventory data, or private photos.</p>
+
+    <h2>Disconnecting and revoking</h2>
+    <p>“Disconnect inventory” removes the local connection without deleting Drive files. “Revoke Google access” also revokes the app's Google consent. You may additionally remove access in your Google Account security settings.</p>
+
+    <p><a href="./">Return to stuff</a></p>
+  </main>
+</body>
+</html>

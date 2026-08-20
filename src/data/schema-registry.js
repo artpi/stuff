@@ -136,7 +136,7 @@ export function inspectHeaders(tabName, headers = []) {
 
 function rangeForColumn(tabName, columnIndex) {
   const column = toA1Column(columnIndex);
-  return `${quoteSheetName(tabName)}!$${column}$2:$${column}`;
+  return `=${quoteSheetName(tabName)}!$${column}$2:$${column}`;
 }
 
 function dataValidation(sheetId, columnIndex, rule) {

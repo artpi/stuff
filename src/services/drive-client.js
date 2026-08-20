@@ -2,6 +2,7 @@ const DRIVE_BASE = 'https://www.googleapis.com/drive/v3';
 const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
+const INVENTORY_NAME = 'stuff — Inventory';
 
 function cleanFilename(value, fallback = 'photo') {
   const cleaned = String(value || fallback)
@@ -31,8 +32,25 @@ export class DriveClient {
     return this.api.request(`${DRIVE_BASE}/files`, {
       method: 'POST',
       query: { fields: 'id,name,mimeType,parents,webViewLink,trashed,capabilities' },
-      body: { name, mimeType: SHEET_MIME, parents: [parentId] },
+      body: {
+        name,
+        mimeType: SHEET_MIME,
+        parents: [parentId],
+        appProperties: { stuffDatabase: 'true' },
+      },
     });
+  }
+
+  listInventoryFiles() {
+    return this.api.request(`${DRIVE_BASE}/files`, {
+      query: {
+        q: `mimeType = '${SHEET_MIME}' and trashed = false and (name = '${INVENTORY_NAME}' or appProperties has { key='stuffDatabase' and value='true' })`,
+        fields: 'files(id,name,mimeType,parents,webViewLink,createdTime,modifiedTime,appProperties)',
+        orderBy: 'modifiedTime desc',
+        pageSize: 100,
+        spaces: 'drive',
+      },
+    }).then((response) => response.files || []);
   }
 
   async createInventoryFiles(parentId = '') {
@@ -40,7 +58,7 @@ export class DriveClient {
     try {
       const photos = await this.createFolder('Photos', root.id);
       const thumbnails = await this.createFolder('Thumbnails', root.id);
-      const spreadsheet = await this.createSpreadsheetFile('stuff — Inventory', root.id);
+      const spreadsheet = await this.createSpreadsheetFile(INVENTORY_NAME, root.id);
       return { root, photos, thumbnails, spreadsheet };
     } catch (error) {
       try {
@@ -167,4 +185,4 @@ export class DriveClient {
   }
 }
 
-export { FOLDER_MIME, SHEET_MIME, cleanFilename };
+export { FOLDER_MIME, INVENTORY_NAME, SHEET_MIME, cleanFilename };

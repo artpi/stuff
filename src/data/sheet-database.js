@@ -112,20 +112,33 @@ export class StuffSheetDatabase extends EventTarget {
 
   static async create({ sheets, drive, parentFolderId = '', appVersion = APP_VERSION }) {
     const resources = await drive.createInventoryFiles(parentFolderId);
-    const now = new Date().toISOString();
-    const databaseId = createUuid();
-    await sheets.initializeV1(resources.spreadsheet.id, createSettingsRows({
-      databaseId,
-      rootFolderId: resources.root.id,
-      photosFolderId: resources.photos.id,
-      thumbnailsFolderId: resources.thumbnails.id,
-      appVersion,
-      now,
-    }));
-    const database = new StuffSheetDatabase({ spreadsheetId: resources.spreadsheet.id, sheets, drive, appVersion });
-    await database.inspect();
-    await database.synchronizeManualRows();
-    return { database, resources };
+    let initialized = false;
+    try {
+      const now = new Date().toISOString();
+      const databaseId = createUuid();
+      await sheets.initializeV1(resources.spreadsheet.id, createSettingsRows({
+        databaseId,
+        rootFolderId: resources.root.id,
+        photosFolderId: resources.photos.id,
+        thumbnailsFolderId: resources.thumbnails.id,
+        appVersion,
+        now,
+      }));
+      initialized = true;
+      const database = new StuffSheetDatabase({ spreadsheetId: resources.spreadsheet.id, sheets, drive, appVersion });
+      await database.inspect();
+      await database.synchronizeManualRows();
+      return { database, resources };
+    } catch (error) {
+      if (!initialized) {
+        try {
+          await drive.trashFile(resources.root.id);
+        } catch {
+          // Preserve the original setup failure; the partial root remains visible for manual cleanup.
+        }
+      }
+      throw error;
+    }
   }
 
   static async connect(options) {

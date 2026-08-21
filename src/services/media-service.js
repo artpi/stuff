@@ -270,18 +270,27 @@ export class MediaService extends EventTarget {
     this.activeUploads += 1;
     this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
     try {
-      onProgress({ stage: 'downloading', progress: 0.15 });
-      const original = await this.drive.downloadFile(selection.id);
-      onProgress({ stage: 'thumbnail', progress: 0.35 });
+      onProgress({ stage: 'copying', progress: 0.1 });
+      const full = await this.drive.copyFile(selection.id, {
+        name: `${photo.id}-${createUuid()}-${selection.name}`,
+        parentId: this.database.settings.get('photos_folder_id'),
+      });
+      onProgress({ stage: 'downloading', progress: 0.3 });
+      const original = await this.drive.downloadFile(full.id);
+      onProgress({ stage: 'thumbnail', progress: 0.45 });
       const thumbnail = await createThumbnail(original);
       const thumb = await this.drive.resumableUpload(thumbnail, {
         name: `${photo.id}-${createUuid()}-thumb.jpg`,
         parentId: this.database.settings.get('thumbnails_folder_id'),
-        onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.35 + progress * 0.6 }),
+        onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.45 + progress * 0.5 }),
       });
       onProgress({ stage: 'linking', progress: 0.97 });
-      const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
-      this.cache.set(selection.id, original);
+      const recovered = await this.database.replaceDrivePhotoFiles(photo.id, {
+        driveFileId: full.id,
+        thumbnailFileId: thumb.id,
+        url: full.webViewLink || '',
+      });
+      this.cache.set(full.id, original);
       this.cache.set(thumb.id, thumbnail);
       this.unavailablePhotoIds.delete(photo.id);
       this.photoAccessGenerations.set(photo.id, (this.photoAccessGenerations.get(photo.id) || 0) + 1);

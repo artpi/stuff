@@ -158,8 +158,8 @@ export class StuffApp extends HTMLElement {
 
   connectionFrame(panelContent) {
     const brand = element('div', { className: 'brand' }, [
-      element('img', { src: 'assets/icons/icon.svg', alt: '', attributes: { width: '38', height: '38' } }),
-      element('span', { text: 'stuff' }),
+      element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '', attributes: { width: '38', height: '38' } })]),
+      element('span', { className: 'brand-name', text: 'stuff' }),
     ]);
     return element('main', { className: 'connection-layout' }, [
       element('section', { className: 'connection-visual' }, [
@@ -422,19 +422,25 @@ export class StuffApp extends HTMLElement {
   renderApplication() {
     if (!this.database) return;
     const route = currentRoute();
+    const accountName = this.profile?.displayName || 'Google connected';
+    const accountSub = this.demo ? 'Local demo' : `Schema v${this.database.settings.get('schema_version') || '?'}`;
+    const accountChip = element('div', { className: 'account-chip' }, [
+      element('span', { className: 'account-avatar', text: accountName.trim().charAt(0).toUpperCase(), attributes: { 'aria-hidden': 'true' } }),
+      element('span', { className: 'account-meta' }, [
+        element('span', { className: 'account-name', text: accountName }),
+        element('span', { className: 'account-sub', text: accountSub }),
+       ]),
+      ]);
     const sidebar = element('aside', { className: 'sidebar' }, [
       element('a', { className: 'brand', href: '#/search' }, [
-        element('img', { src: 'assets/icons/icon.svg', alt: '', attributes: { width: '38', height: '38' } }),
-        element('span', { text: 'stuff' }),
-      ]),
+        element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '', attributes: { width: '38', height: '38' } })]),
+        element('span', { className: 'brand-name', text: 'stuff' }),
+       ]),
       this.buildNavigation(route, false),
-      element('div', { className: 'sidebar-bottom' }, [
-        element('div', { text: this.profile?.displayName || 'Google connected' }),
-        element('div', { text: this.demo ? 'Local demo' : `Schema v${this.database.settings.get('schema_version') || '?'}` }),
-      ]),
-    ]);
+      element('div', { className: 'sidebar-bottom' }, [accountChip]),
+      ]);
     const mobileHeader = element('header', { className: 'mobile-header' }, [
-      element('a', { className: 'brand', href: '#/search' }, [element('img', { src: 'assets/icons/icon.svg', alt: '' }), element('span', { text: 'stuff' })]),
+      element('a', { className: 'brand compact', href: '#/search' }, [element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '' })]), element('span', { className: 'brand-name', text: 'stuff' })]),
       button('+ Add', { className: 'button terracotta', disabled: this.readOnly, onClick: () => this.openItemForm() }),
     ]);
     this.main = element('main', { className: 'app-main' });

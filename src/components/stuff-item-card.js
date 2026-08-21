@@ -26,13 +26,18 @@ export class StuffItemCard extends HTMLElement {
       element('p', { className: 'breadcrumb', text: item.location || 'Unassigned' }),
     ]);
     const tags = parseTags(item.tags);
-    if (tags.length) content.append(element('div', { className: 'tag-row' }, tags.slice(0, 4).map((tag) => element('span', { className: 'tag', text: tag }))));
+    const quantity = Number(item.quantity);
+    const footer = element('div', { className: 'item-footer' });
+    if (tags.length) footer.append(element('div', { className: 'tag-row' }, tags.slice(0, 4).map((tag) => element('span', { className: 'tag', text: tag }))));
+    if (quantity > 1) footer.append(element('span', { className: 'quantity-chip', text: `×${quantity}` }));
+    if (footer.childElementCount) content.append(footer);
+    const badge = quantity > 1 ? element('span', { className: 'item-badge', text: `×${quantity}`, attributes: { 'aria-hidden': 'true' } }) : null;
     const cardButton = element('button', {
       className: 'item-card-button',
       type: 'button',
-      attributes: { 'aria-label': `Open ${item.name || 'item'}` },
+      attributes: { 'aria-label': `Open ${item.name || 'item'}${quantity > 1 ? `, ${quantity} in stock` : ''}` },
       on: { click: open },
-    }, [media, content]);
+    }, badge ? [badge, media, content] : [media, content]);
     this.replaceChildren(element('article', { className: 'item-card' }, cardButton));
   }
 

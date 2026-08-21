@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.13';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.14';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.13';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.14';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.13';
+import { MediaService } from '../services/media-service.js?v=0.1.14';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -100,8 +100,10 @@ class CachedDatabase extends EventTarget {
 class CachedMediaService {
   get uploading() { return false; }
   async resolvePhotoUrl(photo) {
-    if (photo.url) return photo.url;
-    throw new Error('This cached photo needs a connection to Google Drive.');
+    if (String(photo.source).toLocaleLowerCase('en-US') === 'url' && photo.url) return photo.url;
+    const error = new Error('This cached Drive photo is waiting for Google access to be checked.');
+    error.reason = 'cached_media_pending';
+    throw error;
   }
   destroy() {}
 }
@@ -1445,19 +1447,23 @@ export class StuffApp extends HTMLElement {
       const showUnavailable = (error) => {
         const drivePhoto = String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId;
         const decodeFailed = error?.reason === 'image_decode';
-        const recoveryNeeded = drivePhoto && !decodeFailed;
+        const cachedPending = this.showingCachedInventory || error?.reason === 'cached_media_pending';
+        const recoveryNeeded = drivePhoto && !decodeFailed && !cachedPending;
         globalThis.console?.warn?.(`[stuff:gallery] photo unavailable ${JSON.stringify({
           photoId: photo.id,
           driveFileId: photo.driveFileId,
           thumbnailFileId: photo.thumbnailFileId,
           recoveryNeeded,
           decodeFailed,
+          cachedPending,
           error: { name: error?.name, message: error?.message, status: error?.status, reason: error?.reason },
         })}`);
         const placeholder = element('div', { className: 'photo-recovery' }, [
-          element('strong', { text: recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
+          element('strong', { text: cachedPending ? 'Checking photo access…' : recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
           element('p', {
-            text: recoveryNeeded
+            text: cachedPending
+              ? 'Connecting to Google before deciding whether this Drive photo needs recovery.'
+              : recoveryNeeded
               ? `Google Drive could not read this file${error?.status ? ` (${error.status})` : ''}. Select the referenced photo to restore access.`
               : decodeFailed
                 ? 'The file downloaded successfully, but the browser could not decode it as an image.'
@@ -1489,7 +1495,7 @@ export class StuffApp extends HTMLElement {
         figure.classList.remove('gallery-photo-previewable');
         figure.removeAttribute('tabindex');
         figure.removeAttribute('role');
-        figure.setAttribute('aria-label', 'Photo access needs recovery');
+        figure.setAttribute('aria-label', cachedPending ? 'Checking photo access' : recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed');
         figure.replaceChildren(placeholder);
       };
       try {

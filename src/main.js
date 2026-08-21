@@ -1,1 +1,1 @@
-import './components/stuff-app.js?v=0.1.11';
+import './components/stuff-app.js?v=0.1.12';

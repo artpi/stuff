@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.11';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.12';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.11';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.12';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.11';
+import { MediaService } from '../services/media-service.js?v=0.1.12';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1281,6 +1281,7 @@ export class StuffApp extends HTMLElement {
     }
     const canEdit = editable && !this.readOnly;
     const canReorder = canEdit && photos.length > 1;
+    const canPreview = !editable;
     let draggedPhotoId = '';
     const clearDragState = () => {
       draggedPhotoId = '';
@@ -1303,7 +1304,6 @@ export class StuffApp extends HTMLElement {
     };
     const figures = photos.map((photo, index) => {
       const isCover = index === 0;
-      const canPreview = !editable;
       const image = element('img', {
         alt: photo.description || `${entity.name} photo ${index + 1}`,
         loading: isCover ? 'eager' : 'lazy',

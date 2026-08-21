@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.1.11';
+export const APP_VERSION = '0.1.12';
 
 // These three browser-visible identifiers are intentionally public. Replace the
 // placeholders after creating the Google Cloud project described in README.md.

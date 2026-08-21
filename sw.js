@@ -1,4 +1,4 @@
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 const CACHE_NAME = `stuff-shell-v${APP_VERSION}-1`;
 const SHELL = [
   './',

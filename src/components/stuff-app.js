@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.6';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.7';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.6';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.7';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.6';
+import { MediaService } from '../services/media-service.js?v=0.1.7';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1456,7 +1456,7 @@ export class StuffApp extends HTMLElement {
         figure.replaceChildren(placeholder);
       };
       try {
-        const url = await this.media.resolvePhotoUrl(photo, { thumbnail: false });
+        const url = await this.media.resolvePhotoUrl(photo, { thumbnail: true });
         const image = figure.querySelector('img');
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';

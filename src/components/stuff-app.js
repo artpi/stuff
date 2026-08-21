@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.10';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.11';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.10';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.11';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.10';
+import { MediaService } from '../services/media-service.js?v=0.1.11';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1341,25 +1341,6 @@ export class StuffApp extends HTMLElement {
         dragHandle,
         canEdit ? controls : null,
       ]);
-      let previewEnabled = false;
-      const enablePreview = () => {
-        if (!canPreview || previewEnabled || !image.isConnected) return;
-        previewEnabled = true;
-        figure.classList.add('gallery-photo-previewable');
-        figure.setAttribute('aria-label', `Preview ${entity.name} photo ${index + 1}`);
-        figure.setAttribute('tabindex', '0');
-        figure.setAttribute('role', 'button');
-        figure.addEventListener('click', () => {
-          if (!figure.classList.contains('gallery-photo-recovery')) this.openPhotoPreview(entity, photos, index);
-        });
-        figure.addEventListener('keydown', (event) => {
-          if (figure.classList.contains('gallery-photo-recovery')) return;
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            this.openPhotoPreview(entity, photos, index);
-          }
-        });
-      };
       if (canReorder) {
         const dragTargetAt = (x, y) => {
           const target = document.elementFromPoint(x, y)?.closest?.('.gallery-photo');
@@ -1422,6 +1403,26 @@ export class StuffApp extends HTMLElement {
     container.replaceChildren(...figures);
     await Promise.all(figures.map(async (figure, index) => {
       const photo = photos[index];
+      const image = figure.querySelector('img');
+      let previewEnabled = false;
+      const enablePreview = () => {
+        if (!canPreview || previewEnabled || !image?.isConnected) return;
+        previewEnabled = true;
+        figure.classList.add('gallery-photo-previewable');
+        figure.setAttribute('aria-label', `Preview ${entity.name} photo ${index + 1}`);
+        figure.setAttribute('tabindex', '0');
+        figure.setAttribute('role', 'button');
+        figure.addEventListener('click', () => {
+          if (!figure.classList.contains('gallery-photo-recovery')) this.openPhotoPreview(entity, photos, index);
+        });
+        figure.addEventListener('keydown', (event) => {
+          if (figure.classList.contains('gallery-photo-recovery')) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            this.openPhotoPreview(entity, photos, index);
+          }
+        });
+      };
       const showUnavailable = (error) => {
         const drivePhoto = String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId;
         const decodeFailed = error?.reason === 'image_decode';
@@ -1474,7 +1475,6 @@ export class StuffApp extends HTMLElement {
       };
       try {
         const url = await this.media.resolvePhotoUrl(photo, { thumbnail: true });
-        const image = figure.querySelector('img');
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';
           image.addEventListener('load', enablePreview, { once: true });

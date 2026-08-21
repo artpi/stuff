@@ -16,6 +16,7 @@ Production documentation: <https://stuff.piszek.com/SKILL.md>
 - Prefer a spreadsheet URL or ID supplied by the user. Otherwise search accessible Drive files for a Google Sheet named `stuff — Inventory`.
 - If multiple candidates exist, identify them by owner, parent folder, and modification time and ask which inventory to use.
 - Before writing, verify all four tabs exist: `Items`, `Places`, `Photos`, and `Settings`.
+- Before any spreadsheet write, show the user the intended records and fields, then obtain explicit confirmation. A request to inspect, diagnose, search, or propose changes does not authorize editing the Sheet.
 - Read `Settings!A:C` and continue only when `database_type` is exactly `stuff`, `schema_version` is `1`, and `migration_state` is `idle`. If `minimum_app_version` or a newer schema suggests incompatibility, stop and direct the user to the website.
 - Use header names, never fixed column letters. Columns may be reordered and unknown custom columns may exist.
 - Send writes as literal/RAW cell values. Never turn inventory text into a formula, even when it begins with `=`, `+`, `-`, or `@`.
@@ -36,6 +37,8 @@ Always preserve:
 
 Before updating an existing row, compare its current human-facing values with the values you originally read and surface a conflict if they changed. After a write, reread the affected row by stable `ID` when one exists. Row numbers are not stable because users may sort or reorder the Sheet.
 
+Do not invent tags because they seem plausible. Preserve existing tags unless the user asks to change them. For new or updated items, write only tags the user supplied or explicitly approved. You may propose a concise set of tags, but present the proposal separately and wait for confirmation before adding it to the Sheet.
+
 ## Schema v1
 
 ### Items
@@ -45,7 +48,7 @@ Before updating an existing row, compare its current human-facing values with th
 | `Name` | human, required | Item name. |
 | `Location` | human | Prefer the exact `Places.Path` value. |
 | `Description` | human | Free text. |
-| `Tags` | human | Free text; the website parses comma-separated tags. |
+| `Tags` | human | User-approved free text; the website parses comma-separated tags. |
 | `Quantity` | human | Positive number; default `1`. |
 | `Photo Count` | generated | Count of related `Photos` rows. |
 | `Cover Photo` | generated | URL for the first ordered photo. |
@@ -162,6 +165,19 @@ Then set the entity's `Photo Count` to its actual number of photo rows. Set `Cov
 Use only when the agent has Drive write access to the folders identified by `photos_folder_id` and `thumbnails_folder_id` in `Settings`. Upload the original into the Photos folder and an approximately 480-pixel web-compatible thumbnail into Thumbnails, then append the relationship row with `Source` = `Drive`, both file IDs, a new photo UUID, and the resolved entity ID. Do not substitute a local path or a normal Drive sharing URL into `URL`.
 
 If either upload or the row append fails, report the partial result and do not silently retry destructive cleanup. Never delete source files. Direct URL photos are safer when Drive media tooling is unavailable.
+
+### Recover access to directly uploaded Drive photos
+
+The website uses the restricted `drive.file` OAuth scope. An image placed directly into the inventory's Drive folders can therefore exist and be referenced correctly while still returning `404` to the website. Selecting a folder does not grant access to every file inside it.
+
+When the website reports **Photo access needs recovery**, use its **Recover access** action. The user must select the highlighted original image in Google Picker. Recovery then:
+
+1. copies the selected original into the `photos_folder_id` folder as an app-owned file, leaving the directly uploaded source untouched;
+2. creates a new approximately 480-pixel JPEG thumbnail in `thumbnails_folder_id`;
+3. updates the existing `Photos` row with the copied original's `Drive File ID`, the new `Thumbnail File ID`, and the copied file URL;
+4. preserves the photo relationship's `ID`, entity, order, description, and creation time.
+
+Recovery is per photo. Every directly uploaded photo with this problem must be recovered separately through Picker; recovering one photo or selecting a folder does not authorize the others. After each recovery, verify that both file IDs resolve and that the photo still displays after a full page reload. Do not manually substitute guessed Drive IDs or claim a batch is repaired without checking every affected row.
 
 ### Reorder or remove photos
 

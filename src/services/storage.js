@@ -3,6 +3,7 @@ const TOKEN_EXPIRY_KEY = 'stuff.googleAccessTokenExpiresAt';
 const INVENTORY_KEY = 'stuff.spreadsheetId';
 const REMEMBER_KEY = 'stuff.rememberAccess';
 const VIEW_KEY = 'stuff.viewMode';
+const SNAPSHOT_PREFIX = 'stuff.inventorySnapshot.';
 const TOKEN_SAFETY_WINDOW = 60_000;
 
 let memoryToken = '';
@@ -100,10 +101,43 @@ export const preferences = Object.freeze({
   },
 });
 
+export const inventorySnapshotCache = Object.freeze({
+  get(spreadsheetId) {
+    if (!spreadsheetId) return null;
+    try {
+      const snapshot = JSON.parse(storage()?.getItem(`${SNAPSHOT_PREFIX}${spreadsheetId}`) || '');
+      if (!snapshot || snapshot.version !== 1 || !snapshot.data || !Array.isArray(snapshot.data.items) || !Array.isArray(snapshot.data.places) || !Array.isArray(snapshot.data.photos)) return null;
+      return snapshot;
+    } catch {
+      return null;
+    }
+  },
+
+  set(database) {
+    if (!database?.spreadsheetId || !database?.data) return;
+    const snapshot = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      settings: [...(database.settings || new Map()).entries()],
+      data: database.data,
+    };
+    try {
+      storage()?.setItem(`${SNAPSHOT_PREFIX}${database.spreadsheetId}`, JSON.stringify(snapshot));
+    } catch {
+      // Caching is optional. Browsing the connected inventory remains fully functional.
+    }
+  },
+
+  clear(spreadsheetId) {
+    if (spreadsheetId) storage()?.removeItem(`${SNAPSHOT_PREFIX}${spreadsheetId}`);
+  },
+});
+
 export const STORAGE_KEYS = Object.freeze({
   TOKEN_KEY,
   TOKEN_EXPIRY_KEY,
   INVENTORY_KEY,
   REMEMBER_KEY,
   VIEW_KEY,
+  SNAPSHOT_PREFIX,
 });

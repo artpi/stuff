@@ -39,6 +39,16 @@ export function parseTags(value) {
     });
 }
 
+export function moveIdToIndex(ids, movedId, targetId) {
+  const next = [...ids];
+  const fromIndex = next.indexOf(movedId);
+  const targetIndex = next.indexOf(targetId);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) return next;
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(targetIndex, 0, moved);
+  return next;
+}
+
 export function toA1Column(index) {
   let value = Number(index) + 1;
   let column = '';

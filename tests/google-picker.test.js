@@ -70,6 +70,18 @@ test('image Picker includes both owned and shared images', async () => {
   assert.equal(view.ownedByMe, undefined);
 });
 
+test('image Picker can present one exact image to recover access', async () => {
+  const state = installPicker();
+  const service = new GooglePickerService({ getAccessToken: () => 'token' });
+  const result = service.pickImage({ title: 'Recover photo access', fileIds: ['photo-123'] });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(state.builder.title, 'Recover photo access');
+  assert.equal(state.views[0].fileIds, 'photo-123');
+  state.builder.callback({ action: 'picked', docs: [{ id: 'photo-123', name: 'Photo', mimeType: 'image/jpeg' }] });
+  assert.deepEqual(await result, { id: 'photo-123', name: 'Photo', mimeType: 'image/jpeg' });
+});
+
 test('folder Picker can present one exact shared folder for explicit authorization', async () => {
   const state = installPicker();
   const service = new GooglePickerService({ getAccessToken: () => 'token' });

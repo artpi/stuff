@@ -601,6 +601,18 @@ export class StuffSheetDatabase extends EventTarget {
     return this.#addPhoto({ entityType, entityId, entity, source: 'URL', url, description });
   }
 
+  async replaceDrivePhotoThumbnail(photoId, thumbnailFileId) {
+    this.#assertWritable();
+    await this.inspect();
+    const photo = this.#findById('Photos', photoId);
+    if (!photo) throw new Error('This photo relationship no longer exists.');
+    if (canonicalSource(photo.source) !== 'Drive') throw new TypeError('Only Drive photos have a thumbnail to replace.');
+    if (!String(thumbnailFileId || '').trim()) throw new TypeError('A replacement thumbnail is required.');
+    await this.#writeFields('Photos', photo._rowNumber, { thumbnailFileId });
+    await this.inspect();
+    return this.#findById('Photos', photoId);
+  }
+
   async #addPhoto(values) {
     this.#assertWritable();
     const type = canonicalEntityType(values.entityType);

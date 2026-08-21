@@ -52,11 +52,12 @@ export class GooglePickerService {
     return this.#open({ title, views: [view] });
   }
 
-  async pickImage() {
+  async pickImage({ title = 'Choose an image from Google Drive', fileIds = [] } = {}) {
     await waitForPicker();
     const view = new globalThis.google.picker.DocsView(globalThis.google.picker.ViewId.DOCS_IMAGES)
       .setMimeTypes(MIME.images);
-    return this.#open({ title: 'Choose an image from Google Drive', views: [view] });
+    if (fileIds.length) view.setFileIds(fileIds.join(','));
+    return this.#open({ title, views: [view] });
   }
 
   #open({ title, views }) {

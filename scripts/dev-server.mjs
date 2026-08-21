@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
+const host = process.env.HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4173);
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -27,6 +28,6 @@ createServer((request, response) => {
     'X-Content-Type-Options': 'nosniff',
   });
   createReadStream(filePath).pipe(response);
-}).listen(port, '127.0.0.1', () => {
-  process.stdout.write(`stuff is running at http://localhost:${port}\n`);
+}).listen(port, host, () => {
+  process.stdout.write(`stuff is running on http://${host}:${port}\n`);
 });

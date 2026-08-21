@@ -24,6 +24,10 @@ The app runs at:
 http://localhost:4173
 ```
 
+The server listens on `0.0.0.0` by default, so other devices on the local
+network can use `http://<this-computer-ip>:4173`. Set `HOST=127.0.0.1` to
+restrict it to this computer.
+
 To use a different port:
 
 ```bash

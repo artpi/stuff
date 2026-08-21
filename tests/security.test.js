@@ -43,3 +43,13 @@ test('production source contains no HTML parsing or executable-code sinks', asyn
     assert.doesNotMatch(combined, forbidden);
   }
 });
+
+test('content security policy permits Google Picker to position its dialog', async () => {
+  const html = await readFile(resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+  const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1] || '';
+  const styleDirective = policy.split(';').find((directive) => directive.trim().startsWith('style-src')) || '';
+
+  assert.match(styleDirective, /(?:^|\s)'self'(?:\s|$)/);
+  assert.match(styleDirective, /(?:^|\s)'unsafe-inline'(?:\s|$)/);
+  assert.doesNotMatch(policy, /script-src[^;]*'unsafe-inline'/);
+});

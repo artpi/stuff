@@ -760,11 +760,15 @@ export class StuffApp extends HTMLElement {
       this.demo ? null : button('Choose from Drive', {
         className: 'button secondary',
         onClick: async () => {
+          this.dialog.close();
           try {
-            await this.media.importPickerImage(entity, (state) => this.updateProgress(progress, { ...state, file: { name: 'Drive image' }, index: 0, total: 1 }));
-            await this.refreshAfterWrite({ rerender: false });
-            await this.renderGallery(entity, gallery);
+            const imported = await this.media.importPickerImage(entity, (state) => this.updateProgress(progress, { ...state, file: { name: 'Drive image' }, index: 0, total: 1 }));
+            if (imported) {
+              await this.refreshAfterWrite({ rerender: false });
+              this.showToast('Photo added.');
+            }
           } catch (error) { this.handleError(error); }
+          finally { await this.openEntityDetail(entity.id, entity.entityType); }
         },
       }),
     ]);

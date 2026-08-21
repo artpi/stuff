@@ -37,8 +37,7 @@ export class GooglePickerService {
   async pickSpreadsheet() {
     await waitForPicker();
     const view = new globalThis.google.picker.DocsView(globalThis.google.picker.ViewId.SPREADSHEETS)
-      .setMimeTypes(MIME.spreadsheet)
-      .setOwnedByMe(false);
+      .setMimeTypes(MIME.spreadsheet);
     return this.#open({ title: 'Choose a stuff inventory', views: [view] });
   }
 
@@ -54,8 +53,7 @@ export class GooglePickerService {
   async pickImage() {
     await waitForPicker();
     const view = new globalThis.google.picker.DocsView(globalThis.google.picker.ViewId.DOCS_IMAGES)
-      .setMimeTypes(MIME.images)
-      .setOwnedByMe(false);
+      .setMimeTypes(MIME.images);
     return this.#open({ title: 'Choose an image from Google Drive', views: [view] });
   }
 

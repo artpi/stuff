@@ -1,0 +1,18 @@
+# stuff
+
+> A private, Google Sheets- and Drive-backed home inventory. The Sheet is the source of truth and can be operated directly by authorized agents.
+
+Production: https://stuff.piszek.com/
+Privacy: https://stuff.piszek.com/privacy.html
+
+## Agent instructions
+
+- Full skill and schema: https://stuff.piszek.com/SKILL.md
+- Use the skill only with a Google Sheet or Drive resource the user is authorized to access.
+- Verify `Settings` contains `database_type=stuff`, `schema_version=1`, and `migration_state=idle` before writing.
+- Identify columns by header name, preserve unknown columns, and use stable IDs rather than row numbers.
+- Use the website for migrations, schema repair, and ambiguous or unsafe structural changes.
+
+## Project
+
+- Source: https://github.com/artpi/stuff

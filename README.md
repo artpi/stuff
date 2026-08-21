@@ -37,6 +37,8 @@ The dev server serves files directly from the repository root and falls back to
 
 - `index.html` - main app shell.
 - `privacy.html` - privacy page required by Google OAuth configuration.
+- `SKILL.md` - public agent instructions for operating an authorized inventory directly through Google Sheets and Drive.
+- `llms.txt` - lightweight machine-readable discovery pointer to the agent instructions.
 - `manifest.webmanifest` - PWA manifest.
 - `sw.js` - service worker for same-origin shell assets.
 - `CNAME` - GitHub Pages custom domain.

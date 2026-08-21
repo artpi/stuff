@@ -168,7 +168,10 @@ export class StuffApp extends HTMLElement {
           element('h1', { text: 'Everything has a place.' }),
           element('p', { text: 'A visual home inventory that helps you find the map, charger, winter jacket, or mysterious box—without turning your home into a database project.' }),
         ]),
-        element('p', { className: 'connection-note', text: 'Your Sheet. Your Drive. No stuff server in between.' }),
+        element('p', { className: 'connection-note' }, [
+          'Your Sheet. Your Drive. No stuff server in between. ',
+          element('a', { text: 'Agent instructions', href: '/SKILL.md' }),
+        ]),
       ]),
       element('section', { className: 'connection-panel' }, panelContent),
     ]);
@@ -896,6 +899,11 @@ export class StuffApp extends HTMLElement {
         button('Run diagnostics', { className: 'button secondary', onClick: () => this.showDiagnostics() }),
       ]),
     ]);
+    const agents = element('section', { className: 'settings-card' }, [
+      element('h2', { text: 'Use with an agent' }),
+      element('p', { text: 'An authorized Google Sheets or Drive agent can search and update this inventory directly, without using the website.' }),
+      externalLink('Open agent instructions', '/SKILL.md'),
+    ]);
     const sharing = element('section', { className: 'settings-card full' }, [element('h2', { text: 'Share the household inventory' }), element('p', { text: 'Grant one Google account editor access to the dedicated stuff folder and everything inside it.' })]);
     if (this.demo) sharing.append(element('p', { className: 'field-hint', text: 'Sharing is disabled in demo mode.' }));
     else {
@@ -911,7 +919,7 @@ export class StuffApp extends HTMLElement {
     }
     const install = element('section', { className: 'settings-card' }, [element('h2', { text: 'Install stuff' }), element('p', { text: isIos() ? 'On iPhone or iPad: tap Share, then Add to Home Screen.' : 'Install stuff for a full-screen home-screen shortcut.' }), button(this.installPrompt ? 'Install stuff' : isIos() ? 'Show iOS steps' : 'Installation help', { className: 'button secondary install-button', onClick: () => this.installApp() })]);
     const disconnect = element('section', { className: 'settings-card' }, [element('h2', { text: 'Disconnect' }), element('p', { text: 'Neither action deletes the Sheet, folders, or photos.' }), element('div', { className: 'button-row' }, [button('Disconnect inventory', { className: 'button secondary', onClick: () => this.disconnectInventory() }), this.demo ? null : button('Revoke Google access', { className: 'button danger', onClick: () => this.revokeAccess() })])]);
-    const grid = element('div', { className: 'settings-grid' }, [account, data, access, maintenance, sharing, install, disconnect]);
+    const grid = element('div', { className: 'settings-grid' }, [account, data, access, maintenance, agents, sharing, install, disconnect]);
     this.main.replaceChildren(header, grid);
   }
 

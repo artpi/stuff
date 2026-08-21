@@ -3,7 +3,7 @@ import { extname, join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const required = [
-  'index.html', 'privacy.html', 'manifest.webmanifest', 'sw.js', 'CNAME',
+  'index.html', 'privacy.html', 'SKILL.md', 'llms.txt', 'manifest.webmanifest', 'sw.js', 'CNAME',
   'assets/icons/icon-192.png', 'assets/icons/icon-512.png',
   'assets/icons/icon-maskable-192.png', 'assets/icons/icon-maskable-512.png',
   'assets/icons/apple-touch-icon.png',
@@ -46,6 +46,13 @@ for (const file of sourceFiles) {
 const manifest = JSON.parse(await readFile(join(root, 'manifest.webmanifest'), 'utf8'));
 if (manifest.display !== 'standalone') failures.push('Manifest display must be standalone.');
 if (!manifest.icons?.some((icon) => icon.sizes === '512x512' && icon.purpose === 'maskable')) failures.push('Manifest needs a 512px maskable icon.');
+
+const skill = await readFile(join(root, 'SKILL.md'), 'utf8');
+if (!skill.startsWith('---\nname: stuff-inventory\n')) failures.push('SKILL.md needs valid stuff-inventory frontmatter.');
+if (!skill.includes('database_type` is exactly `stuff`')) failures.push('SKILL.md must document database validation.');
+
+const llms = await readFile(join(root, 'llms.txt'), 'utf8');
+if (!llms.includes('https://stuff.piszek.com/SKILL.md')) failures.push('llms.txt must advertise the canonical skill URL.');
 
 if (failures.length) {
   failures.forEach((failure) => process.stderr.write(`${failure}\n`));

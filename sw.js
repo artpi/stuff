@@ -1,9 +1,11 @@
 const APP_VERSION = '0.1.0';
-const CACHE_NAME = `stuff-shell-v${APP_VERSION}-4`;
+const CACHE_NAME = `stuff-shell-v${APP_VERSION}-5`;
 const SHELL = [
   './',
   './index.html',
   './privacy.html',
+  './SKILL.md',
+  './llms.txt',
   './manifest.webmanifest',
   './styles/app.css',
   './assets/icons/icon.svg',

@@ -1,5 +1,5 @@
 const APP_VERSION = '0.1.0';
-const CACHE_NAME = `stuff-shell-v${APP_VERSION}-2`;
+const CACHE_NAME = `stuff-shell-v${APP_VERSION}-4`;
 const SHELL = [
   './',
   './index.html',

@@ -48,3 +48,51 @@ test('marks newer schemas read-only before any write', async () => {
   assert.equal(database.writeEnabled, false);
   await assert.rejects(database.createItem({ name: 'Must not write' }), /read-only/);
 });
+
+test('trashes a partially created root when Sheet initialization fails', async () => {
+  const resources = {
+    root: { id: 'partial-root' },
+    photos: { id: 'partial-photos' },
+    thumbnails: { id: 'partial-thumbnails' },
+    spreadsheet: { id: 'partial-sheet' },
+  };
+  const trashed = [];
+  const drive = {
+    async createInventoryFiles() { return resources; },
+    async trashFile(id) { trashed.push(id); },
+  };
+  const sheets = {
+    async initializeV1() { throw new Error('presentation failed'); },
+  };
+
+  await assert.rejects(
+    StuffSheetDatabase.create({ sheets, drive, appVersion: '0.1.0' }),
+    /presentation failed/,
+  );
+  assert.deepEqual(trashed, ['partial-root']);
+});
+
+test('keeps an initialized inventory when a later inspection is interrupted', async () => {
+  const resources = {
+    root: { id: 'initialized-root' },
+    photos: { id: 'initialized-photos' },
+    thumbnails: { id: 'initialized-thumbnails' },
+    spreadsheet: { id: 'initialized-sheet' },
+  };
+  const trashed = [];
+  const drive = {
+    async createInventoryFiles() { return resources; },
+    async getFile() { return { id: 'initialized-sheet' }; },
+    async trashFile(id) { trashed.push(id); },
+  };
+  const sheets = {
+    async initializeV1() {},
+    async getMetadata() { throw new Error('network interrupted inspection'); },
+  };
+
+  await assert.rejects(
+    StuffSheetDatabase.create({ sheets, drive, appVersion: '0.1.0' }),
+    /network interrupted inspection/,
+  );
+  assert.deepEqual(trashed, []);
+});

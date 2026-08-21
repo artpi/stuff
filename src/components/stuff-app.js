@@ -55,6 +55,7 @@ export class StuffApp extends HTMLElement {
     this.pendingUpdateWorker = null;
     this.demo = false;
     this.reconnectNeeded = false;
+    this.inventoryCandidates = [];
     this.boundHashChange = () => this.renderApplication();
     this.boundOnlineChange = () => this.updateConnectivityBanner();
   }
@@ -121,10 +122,22 @@ export class StuffApp extends HTMLElement {
   async resumeAfterAuthorization() {
     const spreadsheetId = preferences.spreadsheetId;
     if (!spreadsheetId) {
-      this.renderOnboarding();
+      await this.showOnboarding();
       return;
     }
     await this.connectInventory(spreadsheetId);
+  }
+
+  async showOnboarding() {
+    this.renderLoading('Looking for existing inventories…');
+    try {
+      this.inventoryCandidates = await this.drive.listInventoryFiles();
+      this.renderOnboarding(this.inventoryCandidates);
+    } catch (error) {
+      this.inventoryCandidates = [];
+      this.renderOnboarding();
+      this.handleError(error);
+    }
   }
 
   async useDemo() {
@@ -219,14 +232,15 @@ export class StuffApp extends HTMLElement {
     this.replaceChildren(this.connectionFrame(card));
   }
 
-  renderOnboarding() {
+  renderOnboarding(existingInventories = this.inventoryCandidates) {
+    const candidates = Array.isArray(existingInventories) ? existingInventories : [];
     const card = element('div', { className: 'connection-card' }, [
       element('p', { className: 'eyebrow', text: 'Google connected' }),
       element('h2', { text: 'Where is your stuff?' }),
-      element('p', { className: 'lede', text: 'Create a fresh inventory or choose a stuff Sheet that was shared with this Google account.' }),
+      element('p', { className: 'lede', text: candidates.length ? 'An existing stuff inventory is already available to this app.' : 'Create a fresh inventory or choose a stuff Sheet that was shared with this Google account.' }),
     ]);
-    const create = button('Create inventory in My Drive', { className: 'button terracotta', onClick: () => this.createInventory('') });
-    const chooseLocation = button('Choose location…', {
+    const create = button(candidates.length ? 'Create another inventory' : 'Create inventory in My Drive', { className: candidates.length ? 'button secondary' : 'button terracotta', onClick: () => this.createInventory('') });
+    const chooseLocation = button(candidates.length ? 'Create another in chosen location…' : 'Choose location…', {
       className: 'button secondary',
       onClick: async () => {
         try {
@@ -246,10 +260,28 @@ export class StuffApp extends HTMLElement {
         } catch (error) { this.handleError(error); }
       },
     });
-    card.append(element('div', { className: 'button-stack' }, [create, chooseLocation, chooseExisting]));
+    const actions = element('div', { className: 'button-stack' });
+    if (candidates.length) {
+      card.append(element('div', { className: 'notice success' }, [
+        element('strong', { text: candidates.length === 1 ? 'Existing inventory found' : `${candidates.length} existing inventories found` }),
+        element('p', { text: 'Continue with one of these before creating another “stuff” folder.' }),
+      ]));
+      candidates.forEach((file, index) => {
+        const modified = file.modifiedTime ? new Date(file.modifiedTime).toLocaleString() : '';
+        actions.append(button(`${index === 0 ? 'Continue with' : 'Use'} ${file.name || 'stuff inventory'}${modified ? ` · ${modified}` : ''}`, {
+          className: index === 0 ? 'button terracotta' : 'button secondary',
+          onClick: async () => {
+            preferences.spreadsheetId = file.id;
+            await this.connectInventory(file.id);
+          },
+        }));
+      });
+    }
+    actions.append(create, chooseLocation, chooseExisting);
+    card.append(actions);
     card.append(element('div', { className: 'notice' }, [
-      element('strong', { text: 'The default is intentionally one click.' }),
-      element('p', { text: 'stuff creates its own “stuff” folder. You can move or rename that folder later in Drive; the app follows stable file IDs.' }),
+      element('strong', { text: candidates.length ? 'Creating another inventory stays explicit.' : 'The default is intentionally one click.' }),
+      element('p', { text: candidates.length ? 'Choose an existing inventory above unless you intentionally want a separate “stuff” folder.' : 'stuff creates its own “stuff” folder. You can move or rename that folder later in Drive; the app follows stable file IDs.' }),
     ]));
     this.replaceChildren(this.connectionFrame(card), this.createToastRegion());
   }
@@ -270,7 +302,7 @@ export class StuffApp extends HTMLElement {
       preferences.spreadsheetId = database.spreadsheetId;
       await this.activateDatabase(database);
     } catch (error) {
-      this.renderOnboarding();
+      await this.showOnboarding();
       this.handleError(error);
     }
   }
@@ -288,7 +320,7 @@ export class StuffApp extends HTMLElement {
       }
     } catch (error) {
       preferences.spreadsheetId = '';
-      this.renderOnboarding();
+      await this.showOnboarding();
       this.handleError(error);
     }
   }
@@ -350,7 +382,7 @@ export class StuffApp extends HTMLElement {
     }
     actions.append(button('Choose another inventory', {
       className: 'button secondary',
-      onClick: () => { preferences.spreadsheetId = ''; this.renderOnboarding(); },
+      onClick: async () => { preferences.spreadsheetId = ''; await this.showOnboarding(); },
     }));
     card.append(actions);
     this.dialog = document.createElement('stuff-dialog');
@@ -451,10 +483,17 @@ export class StuffApp extends HTMLElement {
     const photo = element('select', { className: 'select', attributes: { 'aria-label': 'Filter by photos' } }, [
       option('all', 'All photos', this.photoFilter === 'all'), option('with', 'With photos', this.photoFilter === 'with'), option('without', 'Without photos', this.photoFilter === 'without'),
     ]);
-    const view = element('div', { className: 'segmented', attributes: { role: 'group', 'aria-label': 'Result view' } }, [
-      element('button', { text: '▦', type: 'button', attributes: { 'aria-label': 'Masonry grid', 'aria-pressed': String(preferences.viewMode === 'grid') }, on: { click: () => { preferences.viewMode = 'grid'; this.renderSearchResults(); } } }),
-      element('button', { text: '☷', type: 'button', attributes: { 'aria-label': 'Compact list', 'aria-pressed': String(preferences.viewMode === 'list') }, on: { click: () => { preferences.viewMode = 'list'; this.renderSearchResults(); } } }),
-    ]);
+    const gridView = element('button', { text: '▦', type: 'button', attributes: { 'aria-label': 'Masonry grid', 'aria-pressed': String(preferences.viewMode === 'grid') } });
+    const listView = element('button', { text: '☷', type: 'button', attributes: { 'aria-label': 'Compact list', 'aria-pressed': String(preferences.viewMode === 'list') } });
+    const setViewMode = (mode) => {
+      preferences.viewMode = mode;
+      gridView.setAttribute('aria-pressed', String(mode === 'grid'));
+      listView.setAttribute('aria-pressed', String(mode === 'list'));
+      this.renderSearchResults();
+    };
+    gridView.addEventListener('click', () => setViewMode('grid'));
+    listView.addEventListener('click', () => setViewMode('list'));
+    const view = element('div', { className: 'segmented', attributes: { role: 'group', 'aria-label': 'Result view' } }, [gridView, listView]);
     const toolbar = element('div', { className: 'search-toolbar' }, [searchWrap, location, photo, view]);
     this.resultsSummary = element('div', { className: 'results-summary', attributes: { 'aria-live': 'polite' } });
     this.results = element('div');

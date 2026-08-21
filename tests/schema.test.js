@@ -49,7 +49,9 @@ test('creates native warning-only dropdowns from current header positions', () =
   assert.equal(validations.every(({ rule }) => rule.strict === false && rule.showCustomUi === true), true);
   const location = validations.find(({ range }) => range.sheetId === 1 && range.startColumnIndex === 3);
   assert.equal(location.rule.condition.type, 'ONE_OF_RANGE');
-  assert.equal(location.rule.condition.values[0].userEnteredValue, "'Places'!$D$2:$D");
+  assert.equal(location.rule.condition.values[0].userEnteredValue, "='Places'!$D$2:$D");
+  const parent = validations.find(({ range }) => range.sheetId === 2 && range.startColumnIndex === 2);
+  assert.equal(parent.rule.condition.values[0].userEnteredValue, "='Places'!$D$2:$D");
   const entityType = validations.find(({ range }) => range.sheetId === 3 && range.startColumnIndex === 1);
   assert.deepEqual(entityType.rule.condition.values.map(({ userEnteredValue }) => userEnteredValue), ['Item', 'Place']);
 });

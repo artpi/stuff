@@ -12,8 +12,8 @@ import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
 import { MediaService } from '../services/media-service.js';
 import { SheetsClient } from '../services/sheets-client.js';
-import { preferences, tokenVault } from '../services/storage.js';
-import { debounce, humanFileSize, isIos, parseTags } from '../utils.js';
+import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
+import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
 import { button, element, externalLink, fieldLabel, option } from './dom.js';
 
 const NAVIGATION = Object.freeze([
@@ -24,8 +24,41 @@ const NAVIGATION = Object.freeze([
 ]);
 
 function currentRoute() {
+  const target = currentSharedTarget();
+  if (target) return target.type;
   const route = globalThis.location.hash.replace(/^#\/?/, '').split('/')[0];
   return ['search', 'places', 'settings'].includes(route) ? route : 'search';
+}
+
+function decodeHashSegment(value) {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    return '';
+  }
+}
+
+function currentSharedTarget() {
+  const [path, queryString = ''] = globalThis.location.hash.replace(/^#\/?/, '').split('?');
+  const parts = path.split('/');
+  const query = new URLSearchParams(queryString);
+  if (parts[0] === 'inventory' && parts[2] === 'items' && parts[1]) {
+    return {
+      inventoryId: decodeHashSegment(parts[1]),
+      type: 'items',
+      searchQuery: query.get('q') || '',
+      placeId: query.get('place') || '',
+      tag: query.get('tag') || '',
+      photo: ['all', 'with', 'without'].includes(query.get('photo')) ? query.get('photo') : 'all',
+    };
+  }
+  if (parts[0] === 'inventory' && ['item', 'place'].includes(parts[2]) && parts[1] && parts[3]) {
+    return { inventoryId: decodeHashSegment(parts[1]), type: parts[2], entityId: decodeHashSegment(parts[3]) };
+  }
+  if (['item', 'place'].includes(parts[0]) && parts[1]) {
+    return { inventoryId: '', type: parts[0], entityId: decodeHashSegment(parts[1]) };
+  }
+  return null;
 }
 
 function localDemoAvailable() {
@@ -34,6 +67,43 @@ function localDemoAvailable() {
 
 function entityTitle(entity, type) {
   return type === 'Place' ? (entity.path || entity.name) : entity.name;
+}
+
+class CachedDatabase extends EventTarget {
+  constructor(spreadsheetId, snapshot) {
+    super();
+    this.spreadsheetId = spreadsheetId;
+    this.settings = new Map(snapshot.settings || []);
+    this.data = snapshot.data;
+    this.inspection = { state: 'current', messages: [], schemaVersion: Number(this.settings.get('schema_version') || 1) };
+    this.writeEnabled = false;
+    this.cachedAt = snapshot.savedAt || '';
+  }
+
+  descendantPlaceIds(placeId, includeSelf = true) {
+    const result = new Set(includeSelf ? [placeId] : []);
+    let added = true;
+    while (added) {
+      added = false;
+      this.data.places.forEach((place) => {
+        if (result.has(place.parentId) && !result.has(place.id)) { result.add(place.id); added = true; }
+      });
+    }
+    return result;
+  }
+
+  photosFor(entityId) {
+    return this.data.photos.filter((photo) => photo.entityId === entityId).sort((a, b) => Number(a.order) - Number(b.order));
+  }
+}
+
+class CachedMediaService {
+  get uploading() { return false; }
+  async resolvePhotoUrl(photo) {
+    if (photo.url) return photo.url;
+    throw new Error('This cached photo needs a connection to Google Drive.');
+  }
+  destroy() {}
 }
 
 export class StuffApp extends HTMLElement {
@@ -51,11 +121,14 @@ export class StuffApp extends HTMLElement {
     this.searchQuery = '';
     this.placeFilter = '';
     this.photoFilter = 'all';
+    this.tagFilter = '';
     this.installPrompt = null;
     this.pendingUpdateWorker = null;
     this.demo = false;
     this.reconnectNeeded = false;
     this.inventoryCandidates = [];
+    this.itemContext = null;
+    this.showingCachedInventory = false;
     this.boundHashChange = () => this.renderApplication();
     this.boundOnlineChange = () => this.updateConnectivityBanner();
   }
@@ -96,6 +169,8 @@ export class StuffApp extends HTMLElement {
         this.renderConnection();
         return;
       }
+      const spreadsheetId = preferences.spreadsheetId;
+      if (spreadsheetId) this.activateCachedInventory(spreadsheetId);
       await this.prepareGoogleServices();
       await this.resumeAfterAuthorization();
     } catch (error) {
@@ -115,8 +190,10 @@ export class StuffApp extends HTMLElement {
     });
     this.sheets = new SheetsClient(this.api);
     this.picker = new GooglePickerService({ getAccessToken: () => tokenVault.get() });
-    const about = await this.drive.getAbout();
-    this.profile = about.user || null;
+    this.drive.getAbout().then((about) => {
+      this.profile = about.user || null;
+      if (this.database) this.renderApplication();
+    }).catch(() => {});
   }
 
   async resumeAfterAuthorization() {
@@ -311,7 +388,7 @@ export class StuffApp extends HTMLElement {
   }
 
   async connectInventory(spreadsheetId) {
-    this.renderLoading('Inspecting the inventory…');
+    if (!this.database || this.database.spreadsheetId !== spreadsheetId) this.renderLoading('Inspecting the inventory…');
     try {
       const database = await StuffSheetDatabase.connect({ spreadsheetId, sheets: this.sheets, drive: this.drive, appVersion: APP_VERSION });
       preferences.spreadsheetId = spreadsheetId;
@@ -322,6 +399,10 @@ export class StuffApp extends HTMLElement {
         this.renderSchemaState();
       }
     } catch (error) {
+      if (this.showingCachedInventory && this.database?.spreadsheetId === spreadsheetId) {
+        this.showToast('Showing the saved inventory. Google could not refresh it just now.');
+        return;
+      }
       preferences.spreadsheetId = '';
       await this.showOnboarding();
       this.handleError(error);
@@ -332,10 +413,27 @@ export class StuffApp extends HTMLElement {
     this.media?.destroy?.();
     this.database = database;
     this.media = new MediaService({ drive: this.drive, database, picker: this.picker });
+    this.showingCachedInventory = false;
     this.refreshSearchIndex();
     if (!globalThis.location.hash) globalThis.location.hash = '#/search';
     this.readOnly = readOnly || !database.writeEnabled;
+    inventorySnapshotCache.set(database);
+    database.addEventListener('datachange', () => inventorySnapshotCache.set(database));
     this.renderApplication();
+  }
+
+  activateCachedInventory(spreadsheetId) {
+    const snapshot = inventorySnapshotCache.get(spreadsheetId);
+    if (!snapshot) return false;
+    this.media?.destroy?.();
+    this.database = new CachedDatabase(spreadsheetId, snapshot);
+    this.media = new CachedMediaService();
+    this.showingCachedInventory = true;
+    this.readOnly = true;
+    this.refreshSearchIndex();
+    if (!globalThis.location.hash) globalThis.location.hash = '#/search';
+    this.renderApplication();
+    return true;
   }
 
   renderSchemaState() {
@@ -422,6 +520,7 @@ export class StuffApp extends HTMLElement {
   renderApplication() {
     if (!this.database) return;
     const route = currentRoute();
+    const navigationRoute = ['item', 'items'].includes(route) ? 'search' : route === 'place' ? 'places' : route;
     const accountName = this.profile?.displayName || 'Google connected';
     const accountSub = this.demo ? 'Local demo' : `Schema v${this.database.settings.get('schema_version') || '?'}`;
     const accountChip = element('div', { className: 'account-chip' }, [
@@ -432,23 +531,24 @@ export class StuffApp extends HTMLElement {
        ]),
       ]);
     const sidebar = element('aside', { className: 'sidebar' }, [
-      element('a', { className: 'brand', href: '#/search' }, [
+      element('a', { className: 'brand', href: this.collectionRoute({ searchQuery: '', placeId: '', tag: '', photo: 'all' }) }, [
         element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '', attributes: { width: '38', height: '38' } })]),
         element('span', { className: 'brand-name', text: 'stuff' }),
        ]),
-      this.buildNavigation(route, false),
+      this.buildNavigation(navigationRoute, false),
       element('div', { className: 'sidebar-bottom' }, [accountChip]),
       ]);
     const mobileHeader = element('header', { className: 'mobile-header' }, [
-      element('a', { className: 'brand compact', href: '#/search' }, [element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '' })]), element('span', { className: 'brand-name', text: 'stuff' })]),
+      element('a', { className: 'brand compact', href: this.collectionRoute({ searchQuery: '', placeId: '', tag: '', photo: 'all' }) }, [element('span', { className: 'brand-mark', attributes: { 'aria-hidden': 'true' } }, [element('img', { src: 'assets/icons/icon.svg', alt: '' })]), element('span', { className: 'brand-name', text: 'stuff' })]),
       button('+ Add', { className: 'button terracotta', disabled: this.readOnly, onClick: () => this.openItemForm() }),
     ]);
     this.main = element('main', { className: 'app-main' });
-    const shell = element('div', { className: 'app-shell' }, [sidebar, mobileHeader, this.main, this.buildNavigation(route, true)]);
+    const shell = element('div', { className: 'app-shell' }, [sidebar, mobileHeader, this.main, this.buildNavigation(navigationRoute, true)]);
     const children = [];
     if (!globalThis.navigator.onLine) children.push(element('div', { className: 'offline-banner', text: 'You are offline. Browsing loaded data is safe; Google reads and writes are unavailable.' }));
+    if (this.showingCachedInventory) children.push(element('div', { className: 'cache-banner', text: 'Showing your saved inventory while Google refreshes it in the background.' }));
     if (this.reconnectNeeded) children.push(this.createReconnectBanner());
-    if (this.readOnly) children.push(element('div', { className: 'schema-banner', text: `Read-only: schema state is ${this.database.inspection.state}.` }));
+    if (this.readOnly && !this.showingCachedInventory) children.push(element('div', { className: 'schema-banner', text: `Read-only: schema state is ${this.database.inspection.state}.` }));
     this.dialog = document.createElement('stuff-dialog');
     children.push(shell, this.dialog, this.createToastRegion());
     this.replaceChildren(...children);
@@ -470,6 +570,7 @@ export class StuffApp extends HTMLElement {
         on: {
           click: () => {
             if (item.route === 'add') this.openItemForm();
+            else if (item.route === 'search') this.openCollection({ searchQuery: '', placeId: '', tag: '', photo: 'all' });
             else globalThis.location.hash = `#/${item.route}`;
           },
         },
@@ -482,7 +583,12 @@ export class StuffApp extends HTMLElement {
 
   renderRoute(route) {
     if (!this.main) return;
-    if (route === 'places') this.renderPlaces();
+    const sharedTarget = currentSharedTarget();
+    if (sharedTarget?.inventoryId && sharedTarget.inventoryId !== this.database.spreadsheetId) this.renderInventoryMismatch(sharedTarget);
+    else if (route === 'item') this.renderItemPage(sharedTarget?.entityId || '');
+    else if (route === 'items') this.renderCollectionPage(sharedTarget);
+    else if (route === 'place') this.renderCollectionPage({ placeId: sharedTarget?.entityId || '' });
+    else if (route === 'places') this.renderPlaces();
     else if (route === 'settings') this.renderSettings();
     else this.renderSearch();
   }
@@ -493,9 +599,16 @@ export class StuffApp extends HTMLElement {
   }
 
   renderSearch() {
+    const selectedPlace = this.database.data.places.find((place) => place.id === this.placeFilter);
+    const title = selectedPlace ? selectedPlace.name : this.tagFilter ? `#${this.tagFilter}` : this.searchQuery ? 'Search results' : 'Find anything';
+    const description = selectedPlace
+      ? `Items in ${selectedPlace.path || selectedPlace.name}. Search within this place or refine the filters.`
+      : this.tagFilter
+        ? `Everything tagged “${this.tagFilter}” across this inventory.`
+        : 'Search names, descriptions, tags, and every level of location.';
     const add = button('+ Add item', { className: 'button terracotta', disabled: this.readOnly, onClick: () => this.openItemForm() });
     const header = element('header', { className: 'page-header' }, [
-      element('div', { className: 'page-header-copy' }, [element('p', { className: 'eyebrow', text: 'Home inventory' }), element('h1', { className: 'page-title', text: 'Find anything' }), element('p', { text: 'Search names, descriptions, tags, and every level of location.' })]),
+      element('div', { className: 'page-header-copy' }, [element('p', { className: 'eyebrow', text: 'Home inventory' }), element('h1', { className: 'page-title', text: title }), element('p', { text: description })]),
       add,
     ]);
     const search = element('input', { type: 'search', value: this.searchQuery, placeholder: 'Try “maps”, “charger”, or “basement”…', attributes: { 'aria-label': 'Search inventory', autocomplete: 'off' } });
@@ -520,20 +633,48 @@ export class StuffApp extends HTMLElement {
     this.resultsSummary = element('div', { className: 'results-summary', attributes: { 'aria-live': 'polite' } });
     this.results = element('div');
     this.main.replaceChildren(header, toolbar, this.resultsSummary, this.results);
-    search.addEventListener('input', debounce(() => { this.searchQuery = search.value; this.renderSearchResults(); }, 80));
-    location.addEventListener('change', () => { this.placeFilter = location.value; this.renderSearchResults(); });
-    photo.addEventListener('change', () => { this.photoFilter = photo.value; this.renderSearchResults(); });
+    search.addEventListener('input', debounce(() => { this.searchQuery = search.value; this.tagFilter = ''; this.syncCollectionUrl(); this.renderSearchResults(); }, 80));
+    location.addEventListener('change', () => { this.placeFilter = location.value; this.syncCollectionUrl(); this.renderSearch(); });
+    photo.addEventListener('change', () => { this.photoFilter = photo.value; this.syncCollectionUrl(); this.renderSearchResults(); });
     this.renderSearchResults();
+  }
+
+  renderCollectionPage(target = {}) {
+    this.searchQuery = target.searchQuery || '';
+    this.placeFilter = target.placeId || '';
+    this.tagFilter = target.tag || '';
+    this.photoFilter = target.photo || 'all';
+    this.renderSearch();
+  }
+
+  collectionRoute({ searchQuery = this.searchQuery, placeId = this.placeFilter, tag = this.tagFilter, photo = this.photoFilter } = {}) {
+    const query = new URLSearchParams();
+    if (searchQuery) query.set('q', searchQuery);
+    if (placeId) query.set('place', placeId);
+    if (tag) query.set('tag', tag);
+    if (photo && photo !== 'all') query.set('photo', photo);
+    const suffix = query.size ? `?${query.toString()}` : '';
+    return `#/inventory/${encodeURIComponent(this.database.spreadsheetId)}/items${suffix}`;
+  }
+
+  syncCollectionUrl() {
+    const route = this.collectionRoute();
+    globalThis.history.replaceState({}, '', `${globalThis.location.pathname}${globalThis.location.search}${route}`);
+  }
+
+  openCollection(filters = {}) {
+    globalThis.location.hash = this.collectionRoute(filters);
   }
 
   renderSearchResults() {
     if (!this.results) return;
     const placeIds = this.placeFilter ? this.database.descendantPlaceIds(this.placeFilter) : null;
-    const items = this.searchIndex.search(this.searchQuery, { placeIds, photo: this.photoFilter });
+    let items = this.searchIndex.search(this.searchQuery, { placeIds, photo: this.photoFilter });
+    if (this.tagFilter) items = items.filter((item) => parseTags(item.tags).some((tag) => normalizeSearchText(tag) === normalizeSearchText(this.tagFilter)));
     this.resultsSummary.replaceChildren(
-      element('span', { text: `${items.length} ${items.length === 1 ? 'item' : 'items'}` }),
-      this.searchQuery || this.placeFilter || this.photoFilter !== 'all'
-        ? button('Clear filters', { className: 'button quiet', onClick: () => { this.searchQuery = ''; this.placeFilter = ''; this.photoFilter = 'all'; this.renderSearch(); } })
+      element('span', { text: `${items.length} ${items.length === 1 ? 'item' : 'items'}${this.tagFilter ? ` tagged “${this.tagFilter}”` : ''}` }),
+      this.searchQuery || this.placeFilter || this.photoFilter !== 'all' || this.tagFilter
+        ? button('Clear filters', { className: 'button quiet', onClick: () => this.openCollection({ searchQuery: '', placeId: '', tag: '', photo: 'all' }) })
         : element('span', { text: 'Search updates instantly' }),
     );
     if (!items.length) {
@@ -547,14 +688,7 @@ export class StuffApp extends HTMLElement {
       return;
     }
     this.results.className = `inventory-grid${preferences.viewMode === 'list' ? ' list' : ''}`;
-    const cards = items.map((item) => {
-      const card = document.createElement('stuff-item-card');
-      card.item = item;
-      card.addEventListener('openitem', () => this.openEntityDetail(item.id, 'Item'));
-      return card;
-    });
-    this.results.replaceChildren(...cards);
-    cards.forEach((card) => this.hydrateCardPhoto(card));
+    this.renderItemCards(this.results, items, this.createSearchItemContext(items));
   }
 
   async hydrateCardPhoto(card) {
@@ -566,6 +700,294 @@ export class StuffApp extends HTMLElement {
     } catch {
       // The card retains a stable placeholder and the detail view offers repair actions.
     }
+  }
+
+  createSearchItemContext(items) {
+    const place = this.database.data.places.find((candidate) => candidate.id === this.placeFilter);
+    const label = this.tagFilter
+      ? `Tag: ${this.tagFilter}`
+      : this.searchQuery
+      ? `Search results for “${this.searchQuery}”`
+      : place
+        ? place.path || place.name
+        : this.photoFilter === 'with'
+          ? 'Items with photos'
+          : this.photoFilter === 'without'
+            ? 'Items without photos'
+            : 'All items';
+    return { itemIds: items.map((item) => item.id), label, returnHash: this.collectionRoute(), returnLabel: 'Back to results' };
+  }
+
+  showItemsWithTag(tag) {
+    this.openCollection({ searchQuery: '', placeId: '', tag, photo: 'all' });
+  }
+
+  createPlaceItemContext(place, items) {
+    return {
+      itemIds: items.map((item) => item.id),
+      label: place.path || place.name,
+      returnHash: this.inventoryRoute('place', place.id),
+      returnLabel: 'Back to place',
+    };
+  }
+
+  renderItemCards(container, items, context) {
+    const cards = items.map((item) => {
+      const card = document.createElement('stuff-item-card');
+      card.item = item;
+      card.addEventListener('openitem', () => this.openItemPage(item.id, context));
+      return card;
+    });
+    container.replaceChildren(...cards);
+    cards.forEach((card) => this.hydrateCardPhoto(card));
+  }
+
+  openItemPage(itemId, context = null) {
+    this.itemContext = context?.itemIds?.includes(itemId) ? context : null;
+    globalThis.location.hash = this.inventoryRoute('item', itemId);
+  }
+
+  itemNavigation(itemId) {
+    const context = this.itemContext;
+    if (!context?.itemIds?.includes(itemId)) return null;
+    const index = context.itemIds.indexOf(itemId);
+    return { ...context, index, previousId: context.itemIds[index - 1] || '', nextId: context.itemIds[index + 1] || '' };
+  }
+
+  navigateItemContext(itemId, direction) {
+    const navigation = this.itemNavigation(itemId);
+    const targetId = direction < 0 ? navigation?.previousId : navigation?.nextId;
+    if (!targetId) return;
+    globalThis.location.hash = this.inventoryRoute('item', targetId);
+    globalThis.requestAnimationFrame(() => globalThis.scrollTo({ top: 0, behavior: 'instant' }));
+  }
+
+  openPlacePage(placeId) {
+    this.openCollection({ searchQuery: '', placeId, tag: '', photo: 'all' });
+  }
+
+  inventoryRoute(type, entityId) {
+    return `#/inventory/${encodeURIComponent(this.database.spreadsheetId)}/${type}/${encodeURIComponent(entityId)}`;
+  }
+
+  renderInventoryMismatch({ inventoryId, type }) {
+    const target = type === 'place' ? 'place' : 'item';
+    this.main.replaceChildren(element('div', { className: 'empty-state inventory-mismatch' }, [
+      element('div', { className: 'empty-state-symbol', text: '↗', attributes: { 'aria-hidden': 'true' } }),
+      element('h2', { text: 'This link is for a different inventory' }),
+      element('p', { text: `It links to the ${target} in inventory ${inventoryId}, but you are currently connected to ${this.database.spreadsheetId}.` }),
+      element('p', { text: 'Connect the linked spreadsheet to open it, or return to the inventory you have open now.' }),
+      button('Open current inventory', { className: 'button secondary', onClick: () => { globalThis.location.hash = '#/search'; } }),
+    ]));
+  }
+
+  renderItemPage(itemId) {
+    const item = this.database.data.items.find((candidate) => candidate.id === itemId);
+    if (!item) {
+      this.main.replaceChildren(element('div', { className: 'empty-state' }, [
+        element('div', { className: 'empty-state-symbol', text: '◇', attributes: { 'aria-hidden': 'true' } }),
+        element('h2', { text: 'Item not found' }),
+        element('p', { text: 'This item may have been removed or the link is incomplete.' }),
+        button('Back to find', { className: 'button secondary', onClick: () => { globalThis.location.hash = '#/search'; } }),
+      ]));
+      return;
+    }
+    item.entityType = 'Item';
+    const gallery = element('div', { className: 'gallery gallery-browse item-page-gallery', attributes: { 'aria-label': `${item.name} photos` } });
+    const navigation = this.itemNavigation(item.id);
+    const itemPlace = this.database.data.places.find((place) => place.id === item.placeId);
+    const actions = element('div', { className: 'button-row item-page-actions' }, [
+      button(`← ${navigation?.returnLabel || 'Back to find'}`, { className: 'button quiet', onClick: () => { globalThis.location.hash = navigation?.returnHash || '#/search'; } }),
+      this.readOnly ? null : button('Edit item', { className: 'button secondary', onClick: () => this.openItemForm(item) }),
+    ]);
+    const description = element('p', {
+      className: `item-page-description is-collapsed${item.description ? '' : ' is-empty'}`,
+      text: item.description || 'Add a description',
+      attributes: this.readOnly ? {} : { tabindex: '0', title: 'Double-click to edit the description', 'aria-label': 'Edit description' },
+    });
+    const expandDescription = button('Show more', { className: 'button quiet item-page-description-toggle' });
+    expandDescription.hidden = true;
+    expandDescription.addEventListener('click', () => {
+      const expanded = description.classList.toggle('is-expanded');
+      description.classList.toggle('is-collapsed', !expanded);
+      expandDescription.textContent = expanded ? 'Show less' : 'Show more';
+    });
+    if (!this.readOnly) {
+      const startEditing = () => this.openInlineDescriptionEditor(item, description, expandDescription);
+      description.addEventListener('dblclick', startEditing);
+      description.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); startEditing(); }
+      });
+    }
+    const header = element('header', { className: 'item-page-header' }, [
+      actions,
+      navigation ? element('p', { className: 'item-page-context', text: `${navigation.label} · Item ${navigation.index + 1} of ${navigation.itemIds.length}` }) : null,
+      itemPlace
+        ? button(itemPlace.path || itemPlace.name, { className: 'breadcrumb breadcrumb-link', label: `Show items in ${itemPlace.path || itemPlace.name}`, onClick: () => this.openPlacePage(itemPlace.id) })
+        : element('p', { className: 'breadcrumb', text: item.location || 'Unassigned' }),
+      element('h1', { className: 'item-page-title', text: item.name || 'Untitled item' }),
+      description,
+      expandDescription,
+      item.tags ? element('div', { className: 'tag-row item-page-tags', attributes: { 'aria-label': 'Item tags' } }, parseTags(item.tags).map((tag) => button(tag, { className: 'tag tag-button', label: `Show all items tagged ${tag}`, onClick: () => this.showItemsWithTag(tag) }))) : null,
+    ]);
+    const details = element('div', { className: 'item-page-details' }, [
+      element('p', { className: 'item-page-quantity', text: `Quantity: ${item.quantity || 1}` }),
+    ]);
+    const itemNavigator = navigation && navigation.itemIds.length > 1
+      ? element('nav', { className: 'item-sequence-nav', attributes: { 'aria-label': 'Items in this list' } }, [
+        button('← Previous', { className: 'button secondary', disabled: !navigation.previousId, onClick: () => this.navigateItemContext(item.id, -1) }),
+        element('span', { className: 'item-sequence-position', text: `${navigation.index + 1} / ${navigation.itemIds.length}`, attributes: { 'aria-live': 'polite' } }),
+        button('Next →', { className: 'button secondary', disabled: !navigation.nextId, onClick: () => this.navigateItemContext(item.id, 1) }),
+      ])
+      : null;
+    const page = element('article', { className: 'item-page' }, [header, gallery, itemNavigator, details]);
+    if (navigation?.itemIds.length > 1) this.enableItemSwipe(page, item.id);
+    this.main.replaceChildren(page);
+    globalThis.requestAnimationFrame(() => {
+      const collapsedHeight = description.getBoundingClientRect().height;
+      description.classList.remove('is-collapsed');
+      description.classList.add('is-expanded');
+      const expandedHeight = description.getBoundingClientRect().height;
+      description.classList.remove('is-expanded');
+      description.classList.add('is-collapsed');
+      expandDescription.hidden = !item.description || expandedHeight <= collapsedHeight + 1;
+    });
+    this.renderGallery(item, gallery).catch((error) => this.handleError(error));
+  }
+
+  openInlineDescriptionEditor(item, description, expandDescription) {
+    if (!description.isConnected || !this.canStartEditing()) return;
+    expandDescription.hidden = true;
+    const editor = element('textarea', {
+      className: 'item-description-editor',
+      value: item.description || '',
+      rows: 4,
+      placeholder: 'Add notes that make this item easier to recognize or find',
+      attributes: { 'aria-label': `Description for ${item.name}` },
+    });
+    const save = button('Save note', { className: 'button terracotta', type: 'submit' });
+    const cancel = button('Cancel', { className: 'button quiet', type: 'button' });
+    const form = element('form', { className: 'item-description-editor-form' }, [editor, element('div', { className: 'button-row' }, [cancel, save])]);
+    description.replaceWith(form);
+    editor.focus();
+    cancel.addEventListener('click', () => this.renderItemPage(item.id));
+    editor.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); this.renderItemPage(item.id); }
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') form.requestSubmit();
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      cancel.disabled = true;
+      try {
+        await this.database.updateItem(item.id, { ...item, description: editor.value.trim() }, { snapshot: item });
+        this.refreshSearchIndex();
+        this.renderItemPage(item.id);
+        this.showToast('Description saved.');
+      } catch (error) {
+        save.disabled = false;
+        cancel.disabled = false;
+        this.handleError(error);
+      }
+    });
+  }
+
+  enableItemSwipe(page, itemId) {
+    let start = null;
+    page.addEventListener('touchstart', (event) => {
+      if (event.touches.length === 1) start = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }, { passive: true });
+    page.addEventListener('touchend', (event) => {
+      if (!start || event.changedTouches.length !== 1) return;
+      const touch = event.changedTouches[0];
+      const deltaX = touch.clientX - start.x;
+      const deltaY = touch.clientY - start.y;
+      start = null;
+      if (Math.abs(deltaX) < 64 || Math.abs(deltaX) < Math.abs(deltaY) * 1.5) return;
+      this.navigateItemContext(itemId, deltaX < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  renderPlacePage(placeId) {
+    const place = this.database.data.places.find((candidate) => candidate.id === placeId);
+    if (!place) {
+      this.main.replaceChildren(element('div', { className: 'empty-state' }, [
+        element('div', { className: 'empty-state-symbol', text: '◇', attributes: { 'aria-hidden': 'true' } }),
+        element('h2', { text: 'Place not found' }),
+        element('p', { text: 'This place may have been removed or the link is incomplete.' }),
+        button('Back to places', { className: 'button secondary', onClick: () => { globalThis.location.hash = '#/places'; } }),
+      ]));
+      return;
+    }
+    const placeIds = this.database.descendantPlaceIds(place.id);
+    const items = this.searchIndex.search('', { placeIds, photo: 'all' });
+    const actions = element('div', { className: 'button-row item-page-actions' }, [
+      button('← Back to places', { className: 'button quiet', onClick: () => { globalThis.location.hash = '#/places'; } }),
+      this.readOnly ? null : button('Edit place', { className: 'button secondary', onClick: () => this.openPlaceForm(place) }),
+    ]);
+    const header = element('header', { className: 'place-item-page-header' }, [
+      actions,
+      element('p', { className: 'eyebrow', text: 'Place inventory' }),
+      element('h1', { className: 'item-page-title', text: place.name }),
+      element('p', { className: 'place-item-page-path', text: place.path || place.name }),
+      element('p', { className: 'place-item-page-summary', text: `${items.length} ${items.length === 1 ? 'item' : 'items'} in this place${placeIds.length > 1 ? ' and its nested places' : ''}.` }),
+    ]);
+    const results = element('div');
+    if (!items.length) {
+      results.replaceChildren(element('div', { className: 'empty-state' }, [
+        element('div', { className: 'empty-state-symbol', text: '□', attributes: { 'aria-hidden': 'true' } }),
+        element('h2', { text: 'No items here yet' }),
+        element('p', { text: 'Items in nested places will show here too.' }),
+      ]));
+    } else {
+      results.className = `inventory-grid${preferences.viewMode === 'list' ? ' list' : ''}`;
+      this.renderItemCards(results, items, this.createPlaceItemContext(place, items));
+    }
+    this.main.replaceChildren(element('article', { className: 'place-item-page' }, [header, results]));
+  }
+
+  openPhotoPreview(entity, photos, initialIndex) {
+    let index = initialIndex;
+    const image = element('img', { className: 'photo-preview-image', alt: '' });
+    image.referrerPolicy = 'no-referrer';
+    const unavailable = element('p', { className: 'photo-preview-unavailable', text: 'Photo unavailable' });
+    unavailable.hidden = true;
+    const counter = element('p', { className: 'photo-preview-counter', attributes: { 'aria-live': 'polite' } });
+    const previous = button('←', { className: 'photo-preview-nav photo-preview-previous', label: 'Previous photo' });
+    const next = button('→', { className: 'photo-preview-nav photo-preview-next', label: 'Next photo' });
+    const dialog = element('dialog', { className: 'photo-preview-dialog', attributes: { 'aria-label': `${entity.name} photo preview` } }, [
+      button('×', { className: 'photo-preview-close', label: 'Close photo preview', onClick: () => dialog.close() }),
+      element('div', { className: 'photo-preview-stage' }, [image, unavailable]),
+      previous,
+      next,
+      counter,
+    ]);
+    const showPhoto = async () => {
+      const photo = photos[index];
+      previous.disabled = index === 0;
+      next.disabled = index === photos.length - 1;
+      counter.textContent = `Photo ${index + 1} of ${photos.length}`;
+      image.alt = photo.description || `${entity.name} photo ${index + 1}`;
+      image.hidden = false;
+      unavailable.hidden = true;
+      image.removeAttribute('src');
+      try {
+        image.src = await this.media.resolvePhotoUrl(photo, { thumbnail: false });
+      } catch {
+        image.hidden = true;
+        unavailable.hidden = false;
+      }
+    };
+    previous.addEventListener('click', () => { if (index > 0) { index -= 1; showPhoto(); } });
+    next.addEventListener('click', () => { if (index < photos.length - 1) { index += 1; showPhoto(); } });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft' && index > 0) { event.preventDefault(); index -= 1; showPhoto(); }
+      if (event.key === 'ArrowRight' && index < photos.length - 1) { event.preventDefault(); index += 1; showPhoto(); }
+    });
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    this.append(dialog);
+    dialog.showModal();
+    showPhoto();
   }
 
   renderPlaces() {
@@ -583,17 +1005,39 @@ export class StuffApp extends HTMLElement {
   buildPlaceBranch(place) {
     const directItems = this.database.data.items.filter((item) => item.placeId === place.id).length;
     const children = this.database.data.places.filter((candidate) => candidate.parentId === place.id).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const menu = element('details', { className: 'place-menu' });
+    const menuItems = [
+      this.readOnly ? null : button('Edit place', {
+        className: 'place-menu-item',
+        onClick: () => { menu.open = false; this.openPlaceForm(place); },
+      }),
+      button('Place details', {
+        className: 'place-menu-item',
+        onClick: () => { menu.open = false; this.openEntityDetail(place.id, 'Place'); },
+      }),
+    ];
+    menu.append(
+      element('summary', { text: '⋯', attributes: { 'aria-label': `Actions for ${place.name}` } }),
+      element('div', { className: 'place-menu-popover' }, menuItems),
+    );
     const row = element('div', { className: 'place-row' }, [
-      element('span', { className: 'nav-icon', text: children.length ? '▣' : '□', attributes: { 'aria-hidden': 'true' } }),
-      element('button', { className: 'place-row-main', type: 'button', on: { click: () => this.openEntityDetail(place.id, 'Place') } }, [
-        element('span', { className: 'place-row-name', text: place.name }),
-        element('span', { className: 'place-row-path', text: place.path || place.name }),
+      element('button', { className: 'place-row-main', type: 'button', attributes: { 'aria-label': `Show items in ${place.path || place.name}` }, on: { click: () => this.showItemsInPlace(place.id) } }, [
+        element('span', { className: 'nav-icon', text: children.length ? '▣' : '□', attributes: { 'aria-hidden': 'true' } }),
+        element('span', { className: 'place-row-copy' }, [
+          element('span', { className: 'place-row-name', text: place.name }),
+          element('span', { className: 'place-row-path', text: place.path || place.name }),
+        ]),
       ]),
       element('span', { className: 'place-count', text: `${directItems} ${directItems === 1 ? 'item' : 'items'}` }),
+      menu,
     ]);
     const branch = element('div', { className: 'place-branch' }, row);
     if (children.length) branch.append(element('div', { className: 'place-children' }, children.map((child) => this.buildPlaceBranch(child))));
     return branch;
+  }
+
+  showItemsInPlace(placeId) {
+    this.openPlacePage(placeId);
   }
 
   placeSelect(selectedId = '', { exclude = new Set(), blankLabel = 'Unassigned' } = {}) {
@@ -606,7 +1050,7 @@ export class StuffApp extends HTMLElement {
   }
 
   openItemForm(item = null) {
-    if (this.readOnly) return;
+    if (!this.canStartEditing()) return;
     const form = element('form');
     const name = element('input', { className: 'field', name: 'name', value: item?.name || '', required: true, placeholder: 'What is it?' });
     const location = this.placeSelect(item?.placeId || '');
@@ -614,10 +1058,10 @@ export class StuffApp extends HTMLElement {
     description.value = item?.description || '';
     const tags = element('input', { className: 'field', name: 'tags', value: item?.tags || '', placeholder: 'maps, school, paper' });
     const quantity = element('input', { className: 'field', type: 'number', name: 'quantity', value: item?.quantity || 1, min: 0.01, step: 'any' });
-    const camera = element('input', { className: 'field', type: 'file', accept: 'image/*', capture: 'environment', multiple: true });
-    const gallery = element('input', { className: 'field', type: 'file', accept: 'image/*', multiple: true });
+    const photoPicker = element('input', { className: 'visually-hidden', type: 'file', accept: 'image/*', multiple: true, attributes: { 'aria-label': 'Choose photos' } });
     const publicUrl = element('input', { className: 'field', type: 'url', placeholder: 'https://…', attributes: { inputmode: 'url' } });
     const progress = this.createProgress();
+    let photoEditorGallery = null;
     const grid = element('div', { className: 'form-grid' }, [
       fieldLabel('Name', name),
       fieldLabel('Location', location, 'Optional; places can be added separately.'),
@@ -626,9 +1070,39 @@ export class StuffApp extends HTMLElement {
       fieldLabel('Quantity', quantity),
     ]);
     if (!item) {
+      const publicUrlField = element('div', { className: 'photo-url-field' }, fieldLabel('Public image URL', publicUrl, 'Public HTTPS image or public Google Drive image'));
+      publicUrlField.hidden = true;
+      const revealPublicUrl = button('Add a public image URL', {
+        className: 'button quiet',
+        onClick: () => {
+          publicUrlField.hidden = false;
+          revealPublicUrl.hidden = true;
+          publicUrl.focus();
+        },
+      });
       grid.append(
-        element('div', { className: 'full detail-section' }, [element('h3', { text: 'Photos (optional)' }), element('div', { className: 'form-grid' }, [fieldLabel('Take photos', camera), fieldLabel('Choose photos', gallery), element('div', { className: 'full' }, fieldLabel('Or add a public image URL', publicUrl, 'Public HTTPS image or public Google Drive image'))]), progress.wrapper]),
+        element('div', { className: 'full detail-section' }, [
+          element('h3', { text: 'Photos (optional)' }),
+          element('p', { className: 'field-hint photo-upload-copy', text: 'Choose images from your device or take a new photo.' }),
+          element('div', { className: 'button-row photo-upload-actions' }, [
+            photoPicker,
+            button('Add photos', { className: 'button secondary', onClick: () => photoPicker.click() }),
+            revealPublicUrl,
+          ]),
+          publicUrlField,
+          progress.wrapper,
+        ]),
       );
+    } else {
+      const gallery = element('div', { className: 'gallery gallery-editable', attributes: { 'aria-label': `${item.name} photos` } });
+      grid.append(
+        element('div', { className: 'full detail-section item-photo-editor' }, [
+          element('h3', { text: 'Photos' }),
+          gallery,
+          this.buildPhotoActions(item, gallery, { reopenAfterPicker: () => this.openItemForm(item) }),
+        ]),
+      );
+      photoEditorGallery = gallery;
     }
     const cancel = button('Cancel', { className: 'button secondary', onClick: () => this.dialog.close() });
     const submit = button(item ? 'Save changes' : 'Save item', { className: 'button terracotta', type: 'submit' });
@@ -652,7 +1126,7 @@ export class StuffApp extends HTMLElement {
         else saved = await this.database.createItem(values);
         persistedItem = saved;
         saved.entityType = 'Item';
-        const files = [...(camera.files || []), ...(gallery.files || [])];
+        const files = [...(photoPicker.files || [])];
         if (files.length) await this.media.uploadFiles(files, saved, (state) => this.updateProgress(progress, state));
         if (publicUrl.value.trim()) {
           this.updateProgress(progress, { stage: 'validating URL', progress: 0.25, file: { name: 'Public image' }, index: 0, total: 1 });
@@ -673,10 +1147,11 @@ export class StuffApp extends HTMLElement {
       }
     });
     this.dialog.show(item ? `Edit ${item.name}` : 'Add an item', form);
+    if (item) this.renderGallery(item, photoEditorGallery, { editable: true }).catch((error) => this.handleError(error));
   }
 
   openPlaceForm(place = null) {
-    if (this.readOnly) return;
+    if (!this.canStartEditing()) return;
     const exclude = place ? this.database.descendantPlaceIds(place.id) : new Set();
     const form = element('form');
     const name = element('input', { className: 'field', value: place?.name || '', required: true, placeholder: 'e.g. Basement shelf' });
@@ -707,12 +1182,16 @@ export class StuffApp extends HTMLElement {
   }
 
   async openEntityDetail(entityId, type) {
+    if (type === 'Item') {
+      this.openItemPage(entityId);
+      return;
+    }
     const collection = type === 'Place' ? this.database.data.places : this.database.data.items;
     const entity = collection.find((candidate) => candidate.id === entityId);
     if (!entity) return;
     entity.entityType = type;
-    const content = element('div');
-    const gallery = element('div', { className: 'gallery', attributes: { 'aria-label': `${entityTitle(entity, type)} photos` } });
+    const content = element('div', { className: 'entity-detail' });
+    const gallery = element('div', { className: 'gallery gallery-browse', attributes: { 'aria-label': `${entityTitle(entity, type)} photos` } });
     content.append(gallery);
     const location = type === 'Place' ? entity.path : (entity.location || 'Unassigned');
     content.append(element('div', { className: 'detail-meta' }, [
@@ -727,20 +1206,19 @@ export class StuffApp extends HTMLElement {
       content.append(element('section', { className: 'detail-section' }, [
         element('h3', { text: 'Direct contents' }),
         element('p', { text: `${childPlaces.length} child ${childPlaces.length === 1 ? 'place' : 'places'} · ${childItems.length} ${childItems.length === 1 ? 'item' : 'items'}` }),
-        ...childItems.map((item) => button(item.name, { className: 'button quiet', onClick: () => this.openEntityDetail(item.id, 'Item') })),
+        ...childItems.map((item) => button(item.name, { className: 'button quiet', onClick: () => this.openItemPage(item.id) })),
       ]));
     }
-    const actionRow = element('div', { className: 'button-row' });
+    const actionRow = element('div', { className: 'button-row detail-actions' });
     if (!this.readOnly) {
       actionRow.append(button(type === 'Place' ? 'Edit place' : 'Edit item', { className: 'button secondary', onClick: () => type === 'Place' ? this.openPlaceForm(entity) : this.openItemForm(entity) }));
-      content.append(this.buildPhotoActions(entity, gallery));
     }
     content.prepend(actionRow);
     this.dialog.show(entity.name, content);
     await this.renderGallery(entity, gallery);
   }
 
-  buildPhotoActions(entity, gallery) {
+  buildPhotoActions(entity, gallery, { reopenAfterPicker = () => this.openEntityDetail(entity.id, entity.entityType) } = {}) {
     const section = element('section', { className: 'detail-section' }, element('h3', { text: 'Add photos' }));
     const camera = element('input', { className: 'visually-hidden', type: 'file', accept: 'image/*', capture: 'environment', multiple: true, attributes: { id: `camera-${entity.id}` } });
     const galleryInput = element('input', { className: 'visually-hidden', type: 'file', accept: 'image/*', multiple: true, attributes: { id: `gallery-${entity.id}` } });
@@ -749,7 +1227,7 @@ export class StuffApp extends HTMLElement {
       try {
         await this.media.uploadFiles(files, entity, (state) => this.updateProgress(progress, state));
         await this.refreshAfterWrite({ rerender: false });
-        await this.renderGallery(entity, gallery);
+        await this.renderGallery(entity, gallery, { editable: true });
         this.showToast('Photos added.');
       } catch (error) { this.handleError(error); }
     };
@@ -765,13 +1243,13 @@ export class StuffApp extends HTMLElement {
           await this.media.addPublicUrl(entity, urlInput.value.trim());
           urlInput.value = '';
           await this.refreshAfterWrite({ rerender: false });
-          await this.renderGallery(entity, gallery);
+          await this.renderGallery(entity, gallery, { editable: true });
           this.showToast('Public image linked.');
         } catch (error) { this.handleError(error); }
         finally { addUrl.disabled = false; }
       },
     });
-    const buttons = element('div', { className: 'button-row' }, [
+    const buttons = element('div', { className: 'button-row photo-action-buttons' }, [
       camera,
       galleryInput,
       button('Take photo', { className: 'button secondary', onClick: () => camera.click() }),
@@ -787,53 +1265,151 @@ export class StuffApp extends HTMLElement {
               this.showToast('Photo added.');
             }
           } catch (error) { this.handleError(error); }
-          finally { await this.openEntityDetail(entity.id, entity.entityType); }
+          finally { await reopenAfterPicker(); }
         },
       }),
     ]);
-    section.append(buttons, element('div', { className: 'button-row' }, [urlInput, addUrl]), progress.wrapper);
+    section.append(buttons, element('div', { className: 'photo-url-row' }, [urlInput, addUrl]), progress.wrapper);
     return section;
   }
 
-  async renderGallery(entity, container) {
+  async renderGallery(entity, container, { editable = false } = {}) {
     const photos = this.database.photosFor(entity.id);
     if (!photos.length) {
       container.replaceChildren(element('div', { className: 'item-placeholder', text: 'No photos yet' }));
       return;
     }
+    const canEdit = editable && !this.readOnly;
+    const canReorder = canEdit && photos.length > 1;
+    let draggedPhotoId = '';
+    const clearDragState = () => {
+      draggedPhotoId = '';
+      container.classList.remove('is-pointer-dragging');
+      container.querySelectorAll('.is-dragging, .is-drop-target').forEach((node) => node.classList.remove('is-dragging', 'is-drop-target'));
+      container.querySelectorAll('[aria-grabbed="true"]').forEach((node) => node.setAttribute('aria-grabbed', 'false'));
+    };
+    const persistOrder = async (orderedIds) => {
+      if (orderedIds.every((id, index) => id === photos[index].id)) return;
+      container.classList.add('is-saving');
+      try {
+        await this.database.reorderPhotos(entity.id, orderedIds);
+        await this.refreshAfterWrite({ rerender: false });
+        await this.renderGallery(entity, container, { editable });
+        this.showToast('Photo order updated.');
+      } catch (error) {
+        container.classList.remove('is-saving');
+        this.handleError(error);
+      }
+    };
     const figures = photos.map((photo, index) => {
-      const image = element('img', { alt: photo.description || `${entity.name} photo ${index + 1}`, loading: 'lazy' });
+      const isCover = index === 0;
+      const canPreview = !editable;
+      const image = element('img', {
+        alt: photo.description || `${entity.name} photo ${index + 1}`,
+        loading: isCover ? 'eager' : 'lazy',
+        attributes: { draggable: 'false' },
+      });
       const controls = element('div', { className: 'photo-controls' });
-      if (!this.readOnly) {
-        const move = async (direction) => {
-          const ordered = [...photos];
-          const target = index + direction;
-          if (target < 0 || target >= ordered.length) return;
-          [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
-          try {
-            await this.database.reorderPhotos(entity.id, ordered.map((candidate) => candidate.id));
-            await this.refreshAfterWrite({ rerender: false });
-            await this.renderGallery(entity, container);
-          } catch (error) { this.handleError(error); }
-        };
+      if (canEdit) {
         controls.append(
-          button('←', { className: '', label: 'Move photo earlier', disabled: index === 0, onClick: () => move(-1) }),
-          button('→', { className: '', label: 'Move photo later', disabled: index === photos.length - 1, onClick: () => move(1) }),
           button('×', {
             className: '', label: 'Remove photo link', onClick: async () => {
               if (!globalThis.confirm('Remove this photo from the item? Drive files will stay untouched.')) return;
-              try { await this.database.removePhoto(photo.id); await this.refreshAfterWrite({ rerender: false }); await this.renderGallery(entity, container); } catch (error) { this.handleError(error); }
+              try { await this.database.removePhoto(photo.id); await this.refreshAfterWrite({ rerender: false }); await this.renderGallery(entity, container, { editable }); } catch (error) { this.handleError(error); }
             },
           }),
         );
         if (String(photo.source).toLocaleLowerCase('en-US') === 'drive' && !this.demo) controls.append(button('🗑', {
           className: '', label: 'Remove and move files to Drive trash', onClick: async () => {
             if (!globalThis.confirm('Remove this photo and move its app-owned full image and thumbnail to Drive trash?')) return;
-            try { await this.database.removePhoto(photo.id, { deleteFiles: true }); await this.refreshAfterWrite({ rerender: false }); await this.renderGallery(entity, container); } catch (error) { this.handleError(error); }
+            try { await this.database.removePhoto(photo.id, { deleteFiles: true }); await this.refreshAfterWrite({ rerender: false }); await this.renderGallery(entity, container, { editable }); } catch (error) { this.handleError(error); }
           },
         }));
       }
-      return element('figure', {}, [image, controls]);
+      const dragHandle = canReorder ? button('⠿', { className: 'photo-drag-handle', label: 'Drag to reorder photo' }) : null;
+      const figure = element('figure', {
+        className: `gallery-photo${isCover ? ' gallery-photo-primary' : ''}${canPreview ? ' gallery-photo-previewable' : ''}`,
+        attributes: {
+          draggable: canReorder ? 'true' : 'false',
+          'aria-label': canPreview ? `Preview ${entity.name} photo ${index + 1}` : `${isCover ? 'Cover photo' : `Photo ${index + 1}`}${canReorder ? '. Drag to reorder.' : ''}`,
+          'aria-grabbed': 'false',
+          tabindex: canPreview ? '0' : null,
+          role: canPreview ? 'button' : null,
+        },
+        dataset: { photoId: photo.id },
+      }, [
+        image,
+        canEdit ? element('span', { className: 'photo-position', text: isCover ? 'Cover photo' : `Photo ${index + 1}` }) : null,
+        dragHandle,
+        canEdit ? controls : null,
+      ]);
+      if (canPreview) {
+        figure.addEventListener('click', () => this.openPhotoPreview(entity, photos, index));
+        figure.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            this.openPhotoPreview(entity, photos, index);
+          }
+        });
+      }
+      if (canReorder) {
+        const dragTargetAt = (x, y) => {
+          const target = document.elementFromPoint(x, y)?.closest?.('.gallery-photo');
+          return target && container.contains(target) ? target : null;
+        };
+        const markDropTarget = (target) => {
+          container.querySelectorAll('.is-drop-target').forEach((node) => node.classList.remove('is-drop-target'));
+          if (target?.dataset.photoId !== draggedPhotoId) target?.classList.add('is-drop-target');
+        };
+        figure.addEventListener('dragstart', (event) => {
+          draggedPhotoId = photo.id;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', photo.id);
+          figure.classList.add('is-dragging');
+          figure.setAttribute('aria-grabbed', 'true');
+        });
+        figure.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          markDropTarget(figure);
+        });
+        figure.addEventListener('dragleave', (event) => {
+          if (!figure.contains(event.relatedTarget)) figure.classList.remove('is-drop-target');
+        });
+        figure.addEventListener('drop', async (event) => {
+          event.preventDefault();
+          const movedId = event.dataTransfer.getData('text/plain') || draggedPhotoId;
+          clearDragState();
+          if (!movedId || movedId === photo.id) return;
+          await persistOrder(moveIdToIndex(photos.map((candidate) => candidate.id), movedId, photo.id));
+        });
+        figure.addEventListener('dragend', clearDragState);
+        dragHandle.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          draggedPhotoId = photo.id;
+          container.classList.add('is-pointer-dragging');
+          figure.classList.add('is-dragging');
+          figure.setAttribute('aria-grabbed', 'true');
+          dragHandle.setPointerCapture(event.pointerId);
+        });
+        dragHandle.addEventListener('pointermove', (event) => {
+          if (draggedPhotoId !== photo.id) return;
+          event.preventDefault();
+          markDropTarget(dragTargetAt(event.clientX, event.clientY));
+        });
+        dragHandle.addEventListener('pointerup', async (event) => {
+          if (draggedPhotoId !== photo.id) return;
+          const target = dragTargetAt(event.clientX, event.clientY);
+          const movedId = draggedPhotoId;
+          dragHandle.releasePointerCapture(event.pointerId);
+          clearDragState();
+          if (!target || target.dataset.photoId === movedId) return;
+          await persistOrder(moveIdToIndex(photos.map((candidate) => candidate.id), movedId, target.dataset.photoId));
+        });
+        dragHandle.addEventListener('pointercancel', clearDragState);
+      }
+      return figure;
     });
     container.replaceChildren(...figures);
     await Promise.all(figures.map(async (figure, index) => {
@@ -996,10 +1572,12 @@ export class StuffApp extends HTMLElement {
   async disconnectInventory() {
     if (!globalThis.confirm('Disconnect this browser from the inventory? No Google Drive files will be deleted.')) return;
     this.media?.destroy?.();
+    inventorySnapshotCache.clear(preferences.spreadsheetId);
     preferences.clearConnection();
     this.database = null;
     this.profile = null;
     this.demo = false;
+    this.showingCachedInventory = false;
     const url = new URL(globalThis.location.href);
     url.searchParams.delete('demo');
     globalThis.history.replaceState({}, '', url.pathname + url.search);
@@ -1010,8 +1588,10 @@ export class StuffApp extends HTMLElement {
     if (!globalThis.confirm('Revoke stuff’s Google access for this account? Your Drive files remain untouched.')) return;
     try {
       await this.auth.revoke();
+      inventorySnapshotCache.clear(preferences.spreadsheetId);
       preferences.clearConnection();
       this.database = null;
+      this.showingCachedInventory = false;
       this.renderConnection();
     } catch (error) { this.handleError(error); }
   }
@@ -1033,26 +1613,43 @@ export class StuffApp extends HTMLElement {
     this.querySelectorAll('.install-button').forEach((installButton) => { installButton.textContent = this.installPrompt ? 'Install stuff' : isIos() ? 'Show iOS steps' : 'Installation help'; });
   }
 
-  requireReconnect() {
+  canStartEditing() {
+    if (this.readOnly) return false;
+    if (this.demo || (!this.reconnectNeeded && this.auth.connected)) return true;
+    this.requireReconnect({ explainBeforeEditing: true });
+    return false;
+  }
+
+  requireReconnect({ explainBeforeEditing = false } = {}) {
     tokenVault.clear();
     this.reconnectNeeded = true;
-    if (this.database && !this.querySelector('.reauth-banner')) {
-      const banner = this.createReconnectBanner();
-      this.insertBefore(banner, this.firstChild);
+    if (explainBeforeEditing && !this.dialog?.dialog?.open) {
+      this.dialog.show('Reconnect to edit', element('div', {}, [
+        element('p', { text: 'Your Google access has expired, so nothing can be saved yet. Reconnect before opening an editor.' }),
+        this.createReconnectBanner(),
+      ]));
+      return;
+    }
+    const dialogBody = this.dialog?.dialog?.open ? this.dialog.body : null;
+    if (dialogBody && !dialogBody.querySelector('.reauth-banner')) {
+      dialogBody.prepend(this.createReconnectBanner());
+    } else if (this.database && !this.querySelector('.reauth-banner')) {
+      this.insertBefore(this.createReconnectBanner(), this.firstChild);
     }
   }
 
   createReconnectBanner() {
     return element('div', { className: 'reauth-banner', attributes: { role: 'alert' } }, [
-      element('span', { text: 'Google access expired. Your open form is still here.' }),
+      element('span', { text: 'Google access expired. Reconnect before editing or saving.' }),
       button('Reconnect', { className: '', onClick: async (event) => {
         const reconnect = event.currentTarget;
         reconnect.disabled = true;
         try {
           await this.auth.connect({ prompt: '', remember: preferences.rememberAccess });
           this.reconnectNeeded = false;
-          this.querySelector('.reauth-banner')?.remove();
-          this.showToast('Google reconnected. You can retry the action.');
+          this.querySelectorAll('.reauth-banner').forEach((banner) => banner.remove());
+          if (this.dialog?.titleElement?.textContent === 'Reconnect to edit') this.dialog.close();
+          this.showToast('Google reconnected. You can edit and save again.');
         } catch (error) { reconnect.disabled = false; this.handleError(error); }
       } }),
     ]);

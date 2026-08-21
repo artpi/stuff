@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   compareSemver,
+  moveIdToIndex,
   normalizeHeader,
   normalizeSearchText,
   parsePublicDriveUrl,
@@ -22,6 +23,12 @@ test('converts zero-based indexes to A1 columns', () => {
   assert.equal(toA1Column(25), 'Z');
   assert.equal(toA1Column(26), 'AA');
   assert.equal(toA1Column(701), 'ZZ');
+});
+
+test('moves a dragged photo to the target position', () => {
+  assert.deepEqual(moveIdToIndex(['a', 'b', 'c', 'd'], 'a', 'c'), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(moveIdToIndex(['a', 'b', 'c', 'd'], 'd', 'b'), ['a', 'd', 'b', 'c']);
+  assert.deepEqual(moveIdToIndex(['a', 'b'], 'a', 'a'), ['a', 'b']);
 });
 
 test('accepts only credential-free HTTPS public URLs', () => {

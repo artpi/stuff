@@ -44,6 +44,11 @@ test('parses common public Google Drive links without needing OAuth', () => {
     originalUrl: 'https://drive.google.com/file/d/abc_DEF-123/view?resourcekey=rk',
   });
   assert.equal(parsePublicDriveUrl('https://example.com/photo.jpg'), null);
+  assert.deepEqual(parsePublicDriveUrl('https://drive.usercontent.google.com/download?id=abc_DEF-123&resourcekey=rk'), {
+    fileId: 'abc_DEF-123',
+    resourceKey: 'rk',
+    originalUrl: 'https://drive.usercontent.google.com/download?id=abc_DEF-123&resourcekey=rk',
+  });
 });
 
 test('compares semantic app versions numerically', () => {

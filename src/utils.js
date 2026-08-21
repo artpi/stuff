@@ -82,7 +82,9 @@ export function safeHttpsUrl(value) {
 
 export function parsePublicDriveUrl(value) {
   const url = safeHttpsUrl(value);
-  const isDrive = url.hostname === 'drive.google.com' || url.hostname === 'docs.google.com';
+  const isDrive = url.hostname === 'drive.google.com'
+    || url.hostname === 'docs.google.com'
+    || url.hostname === 'drive.usercontent.google.com';
   if (!isDrive) return null;
 
   const pathMatch = url.pathname.match(/\/d\/([a-zA-Z0-9_-]+)/);

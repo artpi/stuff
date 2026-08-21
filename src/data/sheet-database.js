@@ -4,6 +4,7 @@ import {
   DATABASE_TYPE,
   REQUIRED_TABS,
   TABLES,
+  SETTING_DESCRIPTIONS,
   buildHeaderIndex,
   buildSheetPresentationRequests,
   createSettingsRows,
@@ -81,6 +82,14 @@ function canonicalEntityType(value) {
   if (normalized === 'item') return 'Item';
   if (normalized === 'place') return 'Place';
   return String(value || '').trim();
+}
+
+function isAnonymousDriveUrl(value) {
+  try {
+    return safeHttpsUrl(value).hostname === 'drive.usercontent.google.com';
+  } catch {
+    return false;
+  }
 }
 
 function uniqueBy(items, key) {
@@ -456,7 +465,9 @@ export class StuffSheetDatabase extends EventTarget {
         const photos = (photoGroups.get(entity.id) || []).sort((a, b) => Number(a.order) - Number(b.order));
         const cover = photos[0];
         const coverValue = cover
-          ? (canonicalSource(cover.source) === 'URL' ? cover.url : cover.driveFileId ? `https://drive.google.com/open?id=${cover.driveFileId}` : '')
+          ? (canonicalSource(cover.source) === 'URL' || isAnonymousDriveUrl(cover.url)
+              ? cover.url
+              : cover.driveFileId ? `https://drive.google.com/open?id=${cover.driveFileId}` : '')
           : '';
         if (Number(entity.photoCount || 0) !== photos.length) updates.push(this.#cellUpdate(tabName, entity._rowNumber, 'photoCount', photos.length));
         if (String(entity.coverPhoto || '') !== coverValue) updates.push(this.#cellUpdate(tabName, entity._rowNumber, 'coverPhoto', coverValue));
@@ -613,6 +624,22 @@ export class StuffSheetDatabase extends EventTarget {
     return this.#findById('Photos', photoId);
   }
 
+  async markDrivePhotoPublic(photoId, url) {
+    this.#assertWritable();
+    const publicUrl = safeHttpsUrl(url);
+    if (publicUrl.hostname !== 'drive.usercontent.google.com') {
+      throw new TypeError('A public Drive media URL is required.');
+    }
+    await this.inspect();
+    const photo = this.#findById('Photos', photoId);
+    if (!photo) throw new Error('This photo relationship no longer exists.');
+    if (canonicalSource(photo.source) !== 'Drive') throw new TypeError('Only Drive photos can be published.');
+    if (!photo.driveFileId || !photo.thumbnailFileId) throw new TypeError('Both Drive file IDs are required.');
+    await this.#writeFields('Photos', photo._rowNumber, { url: publicUrl.href });
+    await this.inspect();
+    return this.#findById('Photos', photoId);
+  }
+
   async replaceDrivePhotoFiles(photoId, { driveFileId, thumbnailFileId, url = '' }) {
     this.#assertWritable();
     await this.inspect();
@@ -713,7 +740,7 @@ export class StuffSheetDatabase extends EventTarget {
     if (current) {
       await this.#writeFields('Settings', current._rowNumber, { value });
     } else {
-      await this.sheets.appendValues(this.spreadsheetId, `${quoteSheetName('Settings')}!A:C`, [[key, value, '']]);
+      await this.sheets.appendValues(this.spreadsheetId, `${quoteSheetName('Settings')}!A:C`, [[key, value, SETTING_DESCRIPTIONS[key] || '']]);
     }
     this.settings.set(key, String(value));
   }
@@ -794,6 +821,14 @@ export class StuffSheetDatabase extends EventTarget {
           safeHttpsUrl(photo.url);
         } catch {
           issues.push({ severity: 'warning', tab: 'Photos', row: photo._rowNumber, code: 'invalid_url', message: 'Public photo URL must use HTTPS.' });
+        }
+      }
+      if (canonicalSource(photo.source) === 'Drive' && isAnonymousDriveUrl(photo.url)) {
+        try {
+          const url = safeHttpsUrl(photo.url);
+          if (url.searchParams.get('id') !== String(photo.driveFileId || '')) throw new Error('mismatch');
+        } catch {
+          issues.push({ severity: 'warning', tab: 'Photos', row: photo._rowNumber, code: 'invalid_public_drive_url', message: 'Public Drive URL does not match the original Drive File ID.' });
         }
       }
       if (!Number.isInteger(Number(photo.order)) || Number(photo.order) <= 0) issues.push({ severity: 'warning', tab: 'Photos', row: photo._rowNumber, code: 'invalid_order', message: 'Order must be a positive integer.' });

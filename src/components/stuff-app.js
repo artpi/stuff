@@ -2,15 +2,16 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.14';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.15';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.14';
+import { PHOTO_ACCESS_LINK, PHOTO_ACCESS_PRIVATE } from '../data/schema-registry.js';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.15';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.14';
+import { isLinkSharedDrivePhoto, MediaService } from '../services/media-service.js?v=0.1.15';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1446,9 +1447,11 @@ export class StuffApp extends HTMLElement {
       };
       const showUnavailable = (error) => {
         const drivePhoto = String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId;
+        const linkSharedPhoto = isLinkSharedDrivePhoto(photo);
         const decodeFailed = error?.reason === 'image_decode';
         const cachedPending = this.showingCachedInventory || error?.reason === 'cached_media_pending';
-        const recoveryNeeded = drivePhoto && !decodeFailed && !cachedPending;
+        const publicLinkUnavailable = linkSharedPhoto && decodeFailed;
+        const recoveryNeeded = drivePhoto && !linkSharedPhoto && !decodeFailed && !cachedPending;
         globalThis.console?.warn?.(`[stuff:gallery] photo unavailable ${JSON.stringify({
           photoId: photo.id,
           driveFileId: photo.driveFileId,
@@ -1459,10 +1462,12 @@ export class StuffApp extends HTMLElement {
           error: { name: error?.name, message: error?.message, status: error?.status, reason: error?.reason },
         })}`);
         const placeholder = element('div', { className: 'photo-recovery' }, [
-          element('strong', { text: cachedPending ? 'Checking photo access…' : recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
+          element('strong', { text: cachedPending ? 'Checking photo access…' : publicLinkUnavailable ? 'Public photo link unavailable' : recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
           element('p', {
             text: cachedPending
               ? 'Connecting to Google before deciding whether this Drive photo needs recovery.'
+              : publicLinkUnavailable
+                ? 'This photo is marked as link-shared, but Google Drive did not return an image. Publish it again from Settings or check its Drive permission.'
               : recoveryNeeded
               ? `Google Drive could not read this file${error?.status ? ` (${error.status})` : ''}. Select the referenced photo to restore access.`
               : decodeFailed
@@ -1591,6 +1596,31 @@ export class StuffApp extends HTMLElement {
         button('Run diagnostics', { className: 'button secondary', onClick: () => this.showDiagnostics() }),
       ]),
     ]);
+    const currentPhotoAccess = this.database.settings.get('photo_access_mode') || PHOTO_ACCESS_PRIVATE;
+    const photoAccess = element('select', { className: 'field', attributes: { 'aria-label': 'Photo access mode' } }, [
+      option(PHOTO_ACCESS_LINK, 'Anyone with the link', currentPhotoAccess === PHOTO_ACCESS_LINK),
+      option(PHOTO_ACCESS_PRIVATE, 'Private Drive access', currentPhotoAccess === PHOTO_ACCESS_PRIVATE),
+    ]);
+    const savePhotoAccess = button('Save photo access', { className: 'button secondary', disabled: this.demo, onClick: async () => {
+      if (!this.canStartEditing()) return;
+      savePhotoAccess.disabled = true;
+      try {
+        await this.database.setSetting('photo_access_mode', photoAccess.value);
+        this.showToast(photoAccess.value === PHOTO_ACCESS_LINK
+          ? 'New photos will be available to anyone with their link.'
+          : 'New photos will use private per-user Drive access.');
+        this.renderSettings();
+      } catch (error) { this.handleError(error); }
+      finally { savePhotoAccess.disabled = false; }
+    } });
+    const publishExisting = button('Publish existing Drive photos', { className: 'button terracotta', disabled: this.demo, onClick: () => this.confirmPublishExistingDrivePhotos() });
+    const photoSharing = element('section', { className: 'settings-card full' }, [
+      element('h2', { text: 'Photo access' }),
+      element('p', { text: 'Link-shared photos work for every inventory guest without broad Drive permissions. Anyone who obtains an image link can view that image.' }),
+      fieldLabel('Default for new Drive photos', photoAccess),
+      element('div', { className: 'button-row' }, [savePhotoAccess, publishExisting]),
+      element('p', { className: 'field-hint', text: 'Changing the default does not alter existing files. Publishing existing photos is a separate confirmed action.' }),
+    ]);
     const agents = element('section', { className: 'settings-card' }, [
       element('h2', { text: 'Use with an agent' }),
       element('p', { text: 'An authorized Google Sheets or Drive agent can search and update this inventory directly, without using the website.' }),
@@ -1611,8 +1641,45 @@ export class StuffApp extends HTMLElement {
     }
     const install = element('section', { className: 'settings-card' }, [element('h2', { text: 'Install stuff' }), element('p', { text: isIos() ? 'On iPhone or iPad: tap Share, then Add to Home Screen.' : 'Install stuff for a full-screen home-screen shortcut.' }), button(this.installPrompt ? 'Install stuff' : isIos() ? 'Show iOS steps' : 'Installation help', { className: 'button secondary install-button', onClick: () => this.installApp() })]);
     const disconnect = element('section', { className: 'settings-card' }, [element('h2', { text: 'Disconnect' }), element('p', { text: 'Neither action deletes the Sheet, folders, or photos.' }), element('div', { className: 'button-row' }, [button('Disconnect inventory', { className: 'button secondary', onClick: () => this.disconnectInventory() }), this.demo ? null : button('Revoke Google access', { className: 'button danger', onClick: () => this.revokeAccess() })])]);
-    const grid = element('div', { className: 'settings-grid' }, [account, data, access, maintenance, agents, sharing, install, disconnect]);
+    const grid = element('div', { className: 'settings-grid' }, [account, data, access, maintenance, photoSharing, agents, sharing, install, disconnect]);
     this.main.replaceChildren(header, grid);
+  }
+
+  confirmPublishExistingDrivePhotos() {
+    if (!this.canStartEditing()) return;
+    const candidates = this.database.data.photos.filter((photo) => String(photo.source).toLocaleLowerCase('en-US') === 'drive'
+      && photo.driveFileId
+      && photo.thumbnailFileId);
+    if (!candidates.length) {
+      this.showToast('There are no complete Drive photo records to publish.');
+      return;
+    }
+    const content = element('div', {}, [
+      element('p', { text: `${candidates.length} Drive ${candidates.length === 1 ? 'photo' : 'photos'} will become readable by anyone who has the individual image link.` }),
+      element('p', { text: 'The inventory Sheet and folders remain private. This operation changes permissions on each original and thumbnail.' }),
+    ]);
+    const publish = button('Publish photos', { className: 'button danger', onClick: async () => {
+      publish.disabled = true;
+      let completed = 0;
+      try {
+        for (const photo of candidates) {
+          await this.media.publishDrivePhoto(photo);
+          completed += 1;
+          this.showToast(`Published ${completed} of ${candidates.length} photos…`, { timeout: 1000 });
+        }
+        await this.refreshAfterWrite();
+        this.dialog.close();
+        this.showToast(`${completed} Drive ${completed === 1 ? 'photo is' : 'photos are'} now link-shared.`);
+      } catch (error) {
+        this.handleError(new Error(`Published ${completed} of ${candidates.length} photos before stopping. ${error.message}`, { cause: error }));
+        publish.disabled = false;
+      }
+    } });
+    content.append(element('div', { className: 'form-actions' }, [
+      button('Cancel', { className: 'button secondary', onClick: () => this.dialog.close() }),
+      publish,
+    ]));
+    this.dialog.show('Publish existing Drive photos?', content);
   }
 
   async syncNow() {

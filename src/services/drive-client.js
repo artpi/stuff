@@ -88,6 +88,27 @@ export class DriveClient {
     });
   }
 
+  shareFileWithLink(fileId) {
+    return this.api.request(`${DRIVE_BASE}/files/${encodeURIComponent(fileId)}/permissions`, {
+      method: 'POST',
+      query: { supportsAllDrives: true, fields: 'id,type,role,allowFileDiscovery' },
+      body: { type: 'anyone', role: 'reader', allowFileDiscovery: false },
+    });
+  }
+
+  listPermissions(fileId) {
+    return this.api.request(`${DRIVE_BASE}/files/${encodeURIComponent(fileId)}/permissions`, {
+      query: { supportsAllDrives: true, fields: 'permissions(id,type,role,allowFileDiscovery)' },
+    }).then((response) => response.permissions || []);
+  }
+
+  removePermission(fileId, permissionId) {
+    return this.api.request(`${DRIVE_BASE}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}`, {
+      method: 'DELETE',
+      query: { supportsAllDrives: true },
+    });
+  }
+
   copyFile(fileId, { name, parentId }) {
     return this.api.request(`${DRIVE_BASE}/files/${encodeURIComponent(fileId)}/copy`, {
       method: 'POST',

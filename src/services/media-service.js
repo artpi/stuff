@@ -1,4 +1,5 @@
-import { createUuid, parsePublicDriveUrl, safeHttpsUrl } from '../utils.js';
+import { PHOTO_ACCESS_LINK } from '../data/schema-registry.js';
+import { createUuid, parsePublicDriveUrl, safeHttpsUrl, wait } from '../utils.js';
 
 function extensionFor(file) {
   const fromName = String(file.name || '').match(/\.([a-zA-Z0-9]{1,8})$/)?.[1];
@@ -87,9 +88,30 @@ export function publicDriveMediaUrl(urlValue) {
   const url = new URL('https://drive.usercontent.google.com/download');
   url.searchParams.set('id', parsed.fileId);
   url.searchParams.set('export', 'view');
-  url.searchParams.set('authuser', '0');
   if (parsed.resourceKey) url.searchParams.set('resourcekey', parsed.resourceKey);
   return url.href;
+}
+
+export function publicDriveThumbnailUrl(urlValue, maximumEdge = 480) {
+  const parsed = parsePublicDriveUrl(urlValue);
+  if (!parsed) return null;
+  const url = new URL('https://drive.google.com/thumbnail');
+  url.searchParams.set('id', parsed.fileId);
+  url.searchParams.set('sz', `w${maximumEdge}`);
+  if (parsed.resourceKey) url.searchParams.set('resourcekey', parsed.resourceKey);
+  return url.href;
+}
+
+export function isLinkSharedDrivePhoto(photo) {
+  if (String(photo?.source).toLocaleLowerCase('en-US') !== 'drive' || !photo?.url) return false;
+  try {
+    const url = safeHttpsUrl(photo.url);
+    const parsed = parsePublicDriveUrl(url.href);
+    return url.hostname === 'drive.usercontent.google.com'
+      && parsed?.fileId === String(photo.driveFileId || '');
+  } catch {
+    return false;
+  }
 }
 
 class BlobUrlCache {
@@ -150,6 +172,9 @@ export class MediaService extends EventTarget {
   async resolvePhotoUrl(photo, { thumbnail = true } = {}) {
     if (String(photo.source).toLocaleLowerCase('en-US') === 'url') {
       return publicDriveMediaUrl(photo.url) || safeHttpsUrl(photo.url).href;
+    }
+    if (isLinkSharedDrivePhoto(photo)) {
+      return thumbnail ? publicDriveThumbnailUrl(photo.url) : publicDriveMediaUrl(photo.url);
     }
     const fileId = thumbnail && photo.thumbnailFileId ? photo.thumbnailFileId : photo.driveFileId;
     if (!fileId) return '';
@@ -223,13 +248,17 @@ export class MediaService extends EventTarget {
         parentId: this.database.settings.get('thumbnails_folder_id'),
         onProgress: (progress) => onProgress('thumbnail', 0.2 + progress * 0.8),
       });
+      if (this.database.settings.get('photo_access_mode') === PHOTO_ACCESS_LINK) onProgress('sharing', 0.98);
+      const publicUrl = this.database.settings.get('photo_access_mode') === PHOTO_ACCESS_LINK
+        ? await this.#publishDriveFiles(fullFile, thumbnailFile)
+        : '';
       return await this.database.addDrivePhoto({
         entityType: entity.entityType,
         entityId: entity.id,
         entity: entity.entityType === 'Place' ? entity.path : entity.name,
         driveFileId: fullFile.id,
         thumbnailFileId: thumbnailFile.id,
-        url: fullFile.webViewLink || '',
+        url: publicUrl || fullFile.webViewLink || '',
       });
     } catch (error) {
       // Keep successfully uploaded files for diagnostics; automatic deletion could
@@ -260,13 +289,17 @@ export class MediaService extends EventTarget {
         parentId: this.database.settings.get('thumbnails_folder_id'),
         onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.35 + progress * 0.6 }),
       });
+      if (this.database.settings.get('photo_access_mode') === PHOTO_ACCESS_LINK) onProgress({ stage: 'sharing', progress: 0.97 });
+      const publicUrl = this.database.settings.get('photo_access_mode') === PHOTO_ACCESS_LINK
+        ? await this.#publishDriveFiles(full, thumb)
+        : '';
       const photo = await this.database.addDrivePhoto({
         entityType: entity.entityType,
         entityId: entity.id,
         entity: entity.entityType === 'Place' ? entity.path : entity.name,
         driveFileId: full.id,
         thumbnailFileId: thumb.id,
-        url: full.webViewLink || '',
+        url: publicUrl || full.webViewLink || '',
       });
       onProgress({ stage: 'complete', progress: 1 });
       return photo;
@@ -274,6 +307,51 @@ export class MediaService extends EventTarget {
       this.activeUploads -= 1;
       this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
     }
+  }
+
+  async #publishDriveFiles(originalFile, thumbnailFile) {
+    const published = [];
+    try {
+      for (const file of [originalFile, thumbnailFile]) {
+        const permissions = await this.drive.listPermissions(file.id);
+        if (!permissions.some((permission) => permission.type === 'anyone' && permission.role === 'reader')) {
+          const permission = await this.drive.shareFileWithLink(file.id);
+          published.push({ fileId: file.id, permissionId: permission.id });
+        }
+      }
+      const original = await this.drive.getFile(originalFile.id, 'id,resourceKey,webViewLink');
+      const source = new URL('https://drive.google.com/open');
+      source.searchParams.set('id', original.id);
+      if (original.resourceKey) source.searchParams.set('resourcekey', original.resourceKey);
+      const publicUrl = publicDriveMediaUrl(source.href);
+      let verificationError;
+      for (const delay of [0, 500, 1500]) {
+        if (delay) await wait(delay);
+        try {
+          await validatePublicImage(publicDriveThumbnailUrl(publicUrl));
+          verificationError = null;
+          break;
+        } catch (error) {
+          verificationError = error;
+        }
+      }
+      if (verificationError) throw verificationError;
+      return publicUrl;
+    } catch (error) {
+      await Promise.allSettled(published.map(({ fileId, permissionId }) => this.drive.removePermission(fileId, permissionId)));
+      throw new Error(`Google Drive could not publish this photo for link sharing. ${error.message}`, { cause: error });
+    }
+  }
+
+  async publishDrivePhoto(photo) {
+    if (String(photo?.source).toLocaleLowerCase('en-US') !== 'drive' || !photo.driveFileId || !photo.thumbnailFileId) {
+      throw new TypeError('Only complete Drive photo records can be published.');
+    }
+    const publicUrl = await this.#publishDriveFiles(
+      { id: photo.driveFileId },
+      { id: photo.thumbnailFileId },
+    );
+    return this.database.markDrivePhotoPublic(photo.id, publicUrl);
   }
 
   async recoverDrivePhotoAccess(photo, onProgress = () => {}) {

@@ -96,6 +96,8 @@ Places form a tree. A place can mean a home, room, cabinet, shelf, box, or any o
 
 `Settings` uses `Key`, `Value`, and `Description`. It is structural metadata, not normal inventory content. Read it for validation; do not edit it during inventory operations.
 
+`photo_access_mode` controls new Drive photo uploads. Missing or `private` means per-user Drive API access. `anyone_with_link` means both uploaded files receive non-discoverable link-reader permission and the `URL` field stores the anonymously readable original while the row remains `Source=Drive`.
+
 ## Read workflows
 
 Read `Items`, `Places`, and `Photos` with unformatted values. Ignore completely empty rows. Match headers case-insensitively after trimming and collapsing whitespace.
@@ -163,6 +165,8 @@ Then set the entity's `Photo Count` to its actual number of photo rows. Set `Cov
 ### Add a Drive photo
 
 Use only when the agent has Drive write access to the folders identified by `photos_folder_id` and `thumbnails_folder_id` in `Settings`. Upload the original into the Photos folder and an approximately 480-pixel web-compatible thumbnail into Thumbnails, then append the relationship row with `Source` = `Drive`, both file IDs, a new photo UUID, and the resolved entity ID. Do not substitute a local path or a normal Drive sharing URL into `URL`.
+
+When `photo_access_mode=anyone_with_link`, grant `type=anyone`, `role=reader`, and non-discoverable permission to both files, verify anonymous image loading without an OAuth token, and store the canonical `https://drive.usercontent.google.com/download?...` original URL in `URL`. If publishing or verification fails, remove only permissions created by the failed attempt, keep uploaded files for diagnostics, and do not append a misleading public relationship row.
 
 If either upload or the row append fails, report the partial result and do not silently retry destructive cleanup. Never delete source files. Direct URL photos are safer when Drive media tooling is unavailable.
 

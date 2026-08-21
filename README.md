@@ -101,6 +101,19 @@ Required Google Cloud configuration:
 
 During OAuth testing, add the household Google accounts as test users.
 
+## Photo access
+
+New inventories default to link-shared Drive photos. The app uploads the original
+and thumbnail with `drive.file`, grants each file non-discoverable “Anyone with
+the link” reader access, verifies anonymous rendering, and records the anonymous
+original URL while retaining both Drive file IDs. This lets shared-inventory
+guests render photos without broad Drive scopes.
+
+Existing inventories remain private until their owner selects the link-sharing
+default in Settings. A separate confirmed Settings action publishes and verifies
+existing Drive photo records. The Sheet and media folders themselves remain
+private.
+
 ## Checks
 
 Run the test suite:

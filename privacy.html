@@ -16,7 +16,7 @@
     <p class="lede">stuff is a static application. It has no application server, analytics, advertising, or account database of its own.</p>
 
     <h2>Where your data lives</h2>
-    <p>Inventory records are stored in a Google Sheet in your Google Drive. Private photos are stored in folders beside that Sheet. Google file permissions control who can access them.</p>
+    <p>Inventory records are stored in a Google Sheet in your Google Drive. Photos are stored in folders beside that Sheet. Depending on the inventory setting, a photo can remain private or be readable by anyone who obtains its individual link.</p>
 
     <h2>Google access</h2>
     <p>stuff asks for the per-file <code>drive.file</code> scope. This lets it access files it creates and files you explicitly choose with Google Picker; it does not grant access to all files in Drive.</p>
@@ -27,6 +27,7 @@
 
     <h2>Public image URLs</h2>
     <p>If you add a public image URL, the browser requests that image directly from its host. The host can see network information such as your IP address. Public image content is not copied to Drive.</p>
+    <p>When link-shared Drive photos are enabled, stuff grants “Anyone with the link” read access to each uploaded original and thumbnail. The folders and inventory Sheet are not made public, but an individual image link can be forwarded and viewed without signing in.</p>
 
     <h2>Local device storage</h2>
     <p>The browser stores the selected spreadsheet ID, interface preferences, the remember-access preference, and—only when enabled—the temporary Google token and expiration time. The service worker caches only the public application shell, never Google API responses, tokens, inventory data, or private photos.</p>

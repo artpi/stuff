@@ -475,6 +475,7 @@ This contract uses native Sheet dropdowns and validation as editing aids, while 
 | `root_folder_id` | Yes | Root Drive folder |
 | `photos_folder_id` | Yes | Full-size image folder |
 | `thumbnails_folder_id` | Yes | Thumbnail folder |
+| `photo_access_mode` | No | `private` or `anyone_with_link`; default for new Drive photo uploads |
 | `created_at` | Yes | Database creation timestamp |
 | `updated_at` | Yes | Last structural update timestamp |
 
@@ -800,6 +801,18 @@ Public URL flow:
   - Anonymous media access is tested without the user's OAuth token.
   - A non-public file is rejected and offered through Picker.
   - Drive URLs are represented as links rather than unsupported `IMAGE()` formulas in the Sheet.
+
+### 9.17A Share managed Drive photos by link
+
+- Description: As an inventory owner, I want managed Drive photos to render for every invited inventory guest without requesting broad Drive access.
+- Acceptance criteria:
+  - New inventories default to `photo_access_mode=anyone_with_link`; an existing inventory without the setting remains private.
+  - The app grants non-discoverable `anyone/reader` permission to both the original and thumbnail.
+  - Anonymous rendering is verified before the public media URL is written to the `Photos.URL` cell.
+  - The row remains `Source=Drive` and retains both Drive file IDs for lifecycle management.
+  - The owner can change the default for future uploads without silently changing existing permissions.
+  - Publishing existing Drive photos requires a separate confirmation and reports partial progress.
+  - Failed publication rolls back only permissions created by that attempt and leaves uploaded files available for diagnostics.
 
 ### 9.18 Reorder and remove photos
 

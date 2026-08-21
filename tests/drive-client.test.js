@@ -33,3 +33,18 @@ test('marks newly created inventory Sheets for rename-safe discovery', async () 
   assert.equal(observed.options.body.appProperties.stuffDatabase, 'true');
   assert.deepEqual(observed.options.body.parents, ['root-1']);
 });
+
+test('publishes a Drive file as non-discoverable link sharing', async () => {
+  let observed;
+  const drive = new DriveClient({
+    async request(url, options) {
+      observed = { url, options };
+      return { id: 'permission-1', type: 'anyone', role: 'reader' };
+    },
+  });
+
+  await drive.shareFileWithLink('photo-1');
+  assert.equal(observed.url, 'https://www.googleapis.com/drive/v3/files/photo-1/permissions');
+  assert.equal(observed.options.method, 'POST');
+  assert.deepEqual(observed.options.body, { type: 'anyone', role: 'reader', allowFileDiscovery: false });
+});

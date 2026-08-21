@@ -69,6 +69,7 @@ export function v1Tables({ reordered = false } = {}) {
     ['root_folder_id', 'root', ''],
     ['photos_folder_id', 'photos', ''],
     ['thumbnails_folder_id', 'thumbs', ''],
+    ['photo_access_mode', 'anyone_with_link', ''],
   ];
   const defaults = Object.fromEntries(Object.entries(TABLES).map(([tab, fields]) => [tab, [fields.map((field) => field.header)]]));
   defaults.Settings = settings;

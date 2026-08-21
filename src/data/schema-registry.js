@@ -3,6 +3,8 @@ import { normalizeHeader, quoteSheetName, toA1Column } from '../utils.js';
 export const DATABASE_TYPE = 'stuff';
 export const CURRENT_SCHEMA_VERSION = 1;
 export const MAX_DATA_ROWS = 10000;
+export const PHOTO_ACCESS_PRIVATE = 'private';
+export const PHOTO_ACCESS_LINK = 'anyone_with_link';
 
 export const TABLES = Object.freeze({
   Items: Object.freeze([
@@ -67,6 +69,7 @@ export const SETTING_DESCRIPTIONS = Object.freeze({
   root_folder_id: 'Drive ID of the dedicated stuff folder',
   photos_folder_id: 'Drive ID of the full-size Photos folder',
   thumbnails_folder_id: 'Drive ID of the Thumbnails folder',
+  photo_access_mode: 'private or anyone_with_link; controls new Drive photo uploads',
   created_at: 'Database creation time in UTC',
   updated_at: 'Last structural update time in UTC',
 });
@@ -86,6 +89,7 @@ export function createSettingsRows({ databaseId, rootFolderId, photosFolderId, t
     root_folder_id: rootFolderId,
     photos_folder_id: photosFolderId,
     thumbnails_folder_id: thumbnailsFolderId,
+    photo_access_mode: PHOTO_ACCESS_LINK,
     created_at: timestamp,
     updated_at: timestamp,
   };

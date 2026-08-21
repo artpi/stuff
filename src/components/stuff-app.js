@@ -1413,16 +1413,41 @@ export class StuffApp extends HTMLElement {
     });
     container.replaceChildren(...figures);
     await Promise.all(figures.map(async (figure, index) => {
+      const photo = photos[index];
+      const showUnavailable = () => {
+        const placeholder = element('div', { className: 'item-placeholder', text: 'Photo unavailable' });
+        if (!this.readOnly && !this.demo && String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId) {
+          const recover = button('Recover access', {
+            className: 'button secondary',
+            onClick: async () => {
+              recover.disabled = true;
+              try {
+                const recovered = await this.media.recoverDrivePhotoAccess(photo, (state) => this.showToast(`Recovering photo: ${Math.round(state.progress * 100)}%`, { timeout: 1200 }));
+                if (recovered) {
+                  await this.refreshAfterWrite({ rerender: false });
+                  await this.renderGallery(entity, container);
+                  this.showToast('Photo access recovered.');
+                }
+              } catch (error) {
+                this.handleError(error);
+                recover.disabled = false;
+              }
+            },
+          });
+          placeholder.append(recover);
+        }
+        figure.querySelector('img')?.replaceWith(placeholder);
+      };
       try {
-        const url = await this.media.resolvePhotoUrl(photos[index], { thumbnail: false });
+        const url = await this.media.resolvePhotoUrl(photo, { thumbnail: false });
         const image = figure.querySelector('img');
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';
           image.src = url;
-          image.addEventListener('error', () => image.replaceWith(element('div', { className: 'item-placeholder', text: 'Photo unavailable' })), { once: true });
+          image.addEventListener('error', showUnavailable, { once: true });
         }
       } catch {
-        figure.querySelector('img')?.replaceWith(element('div', { className: 'item-placeholder', text: 'Photo unavailable' }));
+        showUnavailable();
       }
     }));
   }

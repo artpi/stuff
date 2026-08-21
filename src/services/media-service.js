@@ -246,6 +246,40 @@ export class MediaService extends EventTarget {
     }
   }
 
+  async recoverDrivePhotoAccess(photo, onProgress = () => {}) {
+    if (String(photo.source).toLocaleLowerCase('en-US') !== 'drive' || !photo.driveFileId) {
+      throw new TypeError('Only Drive photos with an original file can be recovered.');
+    }
+    const selection = await this.picker.pickImage({
+      title: 'Recover photo access',
+      fileIds: [photo.driveFileId],
+    });
+    if (!selection) return null;
+    if (selection.id !== photo.driveFileId) {
+      throw new Error('Choose the highlighted original photo so stuff can restore access to this record.');
+    }
+    this.activeUploads += 1;
+    this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
+    try {
+      onProgress({ stage: 'downloading', progress: 0.15 });
+      const original = await this.drive.downloadFile(selection.id);
+      onProgress({ stage: 'thumbnail', progress: 0.35 });
+      const thumbnail = await createThumbnail(original);
+      const thumb = await this.drive.resumableUpload(thumbnail, {
+        name: `${photo.id}-${createUuid()}-thumb.jpg`,
+        parentId: this.database.settings.get('thumbnails_folder_id'),
+        onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.35 + progress * 0.6 }),
+      });
+      onProgress({ stage: 'linking', progress: 0.97 });
+      const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
+      onProgress({ stage: 'complete', progress: 1 });
+      return recovered;
+    } finally {
+      this.activeUploads -= 1;
+      this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
+    }
+  }
+
   async addPublicUrl(entity, urlValue, description = '') {
     const driveUrl = publicDriveMediaUrl(urlValue);
     const validatedUrl = await validatePublicImage(driveUrl || urlValue);

@@ -281,6 +281,8 @@ export class MediaService extends EventTarget {
       });
       onProgress({ stage: 'linking', progress: 0.97 });
       const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
+      this.cache.set(selection.id, original);
+      this.cache.set(thumb.id, thumbnail);
       this.unavailablePhotoIds.delete(photo.id);
       this.photoAccessGenerations.set(photo.id, (this.photoAccessGenerations.get(photo.id) || 0) + 1);
       onProgress({ stage: 'complete', progress: 1 });

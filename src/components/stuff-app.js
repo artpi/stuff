@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.7';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.8';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.7';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.8';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.7';
+import { MediaService } from '../services/media-service.js?v=0.1.8';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1422,12 +1422,29 @@ export class StuffApp extends HTMLElement {
     container.replaceChildren(...figures);
     await Promise.all(figures.map(async (figure, index) => {
       const photo = photos[index];
-      const showUnavailable = () => {
+      const showUnavailable = (error) => {
+        const drivePhoto = String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId;
+        const decodeFailed = error?.reason === 'image_decode';
+        const recoveryNeeded = drivePhoto && !decodeFailed;
+        globalThis.console?.warn?.('[stuff:gallery] photo unavailable', {
+          photoId: photo.id,
+          driveFileId: photo.driveFileId,
+          thumbnailFileId: photo.thumbnailFileId,
+          recoveryNeeded,
+          decodeFailed,
+          error: { name: error?.name, message: error?.message, status: error?.status, reason: error?.reason },
+        });
         const placeholder = element('div', { className: 'photo-recovery' }, [
-          element('strong', { text: 'Photo access needs recovery' }),
-          element('p', { text: 'This image was added directly in Google Drive. stuff has not been granted access to read it.' }),
+          element('strong', { text: recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
+          element('p', {
+            text: recoveryNeeded
+              ? `Google Drive could not read this file${error?.status ? ` (${error.status})` : ''}. Select the referenced photo to restore access.`
+              : decodeFailed
+                ? 'The file downloaded successfully, but the browser could not decode it as an image.'
+                : 'This image is not currently available.',
+          }),
         ]);
-        if (!this.readOnly && !this.demo && String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId) {
+        if (!this.readOnly && !this.demo && recoveryNeeded) {
           const recover = button('Recover access', {
             className: 'button terracotta',
             onClick: async (event) => {
@@ -1461,12 +1478,17 @@ export class StuffApp extends HTMLElement {
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';
           image.addEventListener('load', enablePreview, { once: true });
+          image.addEventListener('load', () => globalThis.console?.info?.('[stuff:gallery] photo rendered', {
+            photoId: photo.id,
+            driveFileId: photo.driveFileId,
+            thumbnailFileId: photo.thumbnailFileId,
+          }), { once: true });
           image.src = url;
-          image.addEventListener('error', showUnavailable, { once: true });
+          image.addEventListener('error', () => showUnavailable({ reason: 'image_decode' }), { once: true });
           if (image.complete && image.naturalWidth) enablePreview();
         }
-      } catch {
-        showUnavailable();
+      } catch (error) {
+        showUnavailable(error);
       }
     }));
   }

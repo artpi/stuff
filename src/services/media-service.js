@@ -23,6 +23,10 @@ function loadImage(blob) {
   });
 }
 
+function mediaLog(event, details = {}, level = 'info') {
+  globalThis.console?.[level]?.(`[stuff:media] ${event}`, details);
+}
+
 export async function createThumbnail(file, maximumEdge = 480) {
   let source;
   let width;
@@ -149,15 +153,32 @@ export class MediaService extends EventTarget {
     }
     const fileId = thumbnail && photo.thumbnailFileId ? photo.thumbnailFileId : photo.driveFileId;
     if (!fileId) return '';
-    if (this.unavailablePhotoIds.has(photo.id)) throw new Error('This Drive photo needs its access recovered.');
+    mediaLog('resolve:start', { photoId: photo.id, fileId, thumbnail });
+    if (this.unavailablePhotoIds.has(photo.id)) {
+      mediaLog('resolve:blocked-by-known-failure', { photoId: photo.id, fileId, thumbnail }, 'warn');
+      throw new Error('This Drive photo needs its access recovered.');
+    }
     const generation = this.photoAccessGenerations.get(photo.id) || 0;
     const cached = this.cache.get(fileId);
-    if (cached) return cached;
+    if (cached) {
+      mediaLog('resolve:cache-hit', { photoId: photo.id, fileId, thumbnail });
+      return cached;
+    }
     try {
       const blob = await this.drive.downloadFile(fileId);
+      mediaLog('resolve:downloaded', { photoId: photo.id, fileId, thumbnail, type: blob.type, size: blob.size });
       return this.cache.set(fileId, blob);
     } catch (error) {
       if ((this.photoAccessGenerations.get(photo.id) || 0) === generation) this.unavailablePhotoIds.add(photo.id);
+      mediaLog('resolve:failed', {
+        photoId: photo.id,
+        fileId,
+        thumbnail,
+        name: error?.name,
+        message: error?.message,
+        status: error?.status,
+        reason: error?.reason,
+      }, 'warn');
       throw error;
     }
   }
@@ -267,6 +288,7 @@ export class MediaService extends EventTarget {
     if (selection.id !== photo.driveFileId) {
       throw new Error('Choose the highlighted original photo so stuff can restore access to this record.');
     }
+    mediaLog('recovery:selected', { photoId: photo.id, fileId: selection.id, name: selection.name });
     this.activeUploads += 1;
     this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
     try {
@@ -275,19 +297,28 @@ export class MediaService extends EventTarget {
       // grant. Keep that exact ID; a copy made through files.copy is not a
       // substitute for explicitly opening the file with this app.
       const original = await this.drive.downloadFile(selection.id);
+      mediaLog('recovery:original-downloaded', { photoId: photo.id, fileId: selection.id, type: original.type, size: original.size });
       onProgress({ stage: 'thumbnail', progress: 0.45 });
       const thumbnail = await createThumbnail(original);
+      mediaLog('recovery:thumbnail-created', { photoId: photo.id, type: thumbnail.type, size: thumbnail.size });
       const thumb = await this.drive.resumableUpload(thumbnail, {
         name: `${photo.id}-${createUuid()}-thumb.jpg`,
         parentId: this.database.settings.get('thumbnails_folder_id'),
         onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.45 + progress * 0.5 }),
       });
+      mediaLog('recovery:thumbnail-uploaded', { photoId: photo.id, thumbnailFileId: thumb.id });
       onProgress({ stage: 'linking', progress: 0.97 });
       const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
+      mediaLog('recovery:sheet-linked', {
+        photoId: photo.id,
+        driveFileId: recovered?.driveFileId,
+        thumbnailFileId: recovered?.thumbnailFileId,
+      });
       this.cache.set(selection.id, original);
       this.cache.set(thumb.id, thumbnail);
       this.unavailablePhotoIds.delete(photo.id);
       this.photoAccessGenerations.set(photo.id, (this.photoAccessGenerations.get(photo.id) || 0) + 1);
+      mediaLog('recovery:complete', { photoId: photo.id, driveFileId: selection.id, thumbnailFileId: thumb.id });
       onProgress({ stage: 'complete', progress: 1 });
       return recovered;
     } finally {

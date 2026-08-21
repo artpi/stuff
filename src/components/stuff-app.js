@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.8';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.9';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.8';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.9';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.8';
+import { MediaService } from '../services/media-service.js?v=0.1.9';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -165,11 +165,17 @@ export class StuffApp extends HTMLElement {
         this.renderConnection({ configurationMissing: true });
         return;
       }
+      const spreadsheetId = preferences.spreadsheetId;
       if (!tokenVault.get()) {
+        if (spreadsheetId && inventorySnapshotCache.get(spreadsheetId)) {
+          this.reconnectNeeded = true;
+          this.activateCachedInventory(spreadsheetId);
+          void this.restoreGoogleSilently();
+          return;
+        }
         this.renderConnection();
         return;
       }
-      const spreadsheetId = preferences.spreadsheetId;
       if (spreadsheetId) this.activateCachedInventory(spreadsheetId);
       await this.prepareGoogleServices();
       await this.resumeAfterAuthorization();
@@ -194,6 +200,19 @@ export class StuffApp extends HTMLElement {
       this.profile = about.user || null;
       if (this.database) this.renderApplication();
     }).catch(() => {});
+  }
+
+  async restoreGoogleSilently() {
+    const restored = await this.auth.reconnectSilently({ remember: preferences.rememberAccess });
+    if (!restored || !this.database) return;
+    try {
+      await this.prepareGoogleServices();
+      await this.resumeAfterAuthorization();
+      this.reconnectNeeded = false;
+      this.renderApplication();
+    } catch {
+      this.requireReconnect();
+    }
   }
 
   async resumeAfterAuthorization() {
@@ -288,14 +307,14 @@ export class StuffApp extends HTMLElement {
       remember.addEventListener('change', () => { preferences.rememberAccess = remember.checked; });
       card.append(element('div', { className: 'remember-box' }, [
         element('label', { className: 'remember-line' }, [remember, element('span', { text: 'Remember access on this device' })]),
-        element('p', { text: 'This stores Google’s short-lived token until just before it expires. Any script running on this origin could use it during that time. Disable this on shared devices.' }),
+        element('p', { text: 'This remembers the current short-lived Google token on this device. After it expires, stuff first tries to reconnect without a prompt; if Google needs you, you can reconnect without losing access to saved inventory data. Disable this on shared devices.' }),
       ]));
       const connectButton = button('Continue with Google', {
         className: 'button terracotta',
         onClick: async () => {
           connectButton.disabled = true;
           try {
-            await this.auth.connect({ remember: remember.checked, prompt: 'consent' });
+            await this.auth.connect({ remember: remember.checked, prompt: '' });
             await this.prepareGoogleServices();
             await this.resumeAfterAuthorization();
           } catch (error) {
@@ -546,7 +565,7 @@ export class StuffApp extends HTMLElement {
     const shell = element('div', { className: 'app-shell' }, [sidebar, mobileHeader, this.main, this.buildNavigation(navigationRoute, true)]);
     const children = [];
     if (!globalThis.navigator.onLine) children.push(element('div', { className: 'offline-banner', text: 'You are offline. Browsing loaded data is safe; Google reads and writes are unavailable.' }));
-    if (this.showingCachedInventory) children.push(element('div', { className: 'cache-banner', text: 'Showing your saved inventory while Google refreshes it in the background.' }));
+    if (this.showingCachedInventory) children.push(element('div', { className: 'cache-banner', text: 'Showing your saved inventory. Google access is needed to refresh data, load Drive photos, or make changes.' }));
     if (this.reconnectNeeded) children.push(this.createReconnectBanner());
     if (this.readOnly && !this.showingCachedInventory) children.push(element('div', { className: 'schema-banner', text: `Read-only: schema state is ${this.database.inspection.state}.` }));
     this.dialog = document.createElement('stuff-dialog');
@@ -1689,6 +1708,8 @@ export class StuffApp extends HTMLElement {
   requireReconnect({ explainBeforeEditing = false } = {}) {
     tokenVault.clear();
     this.reconnectNeeded = true;
+    this.readOnly = true;
+    if (this.database && !this.dialog?.dialog?.open) this.renderApplication();
     if (explainBeforeEditing && !this.dialog?.dialog?.open) {
       this.dialog.show('Reconnect to edit', element('div', {}, [
         element('p', { text: 'Your Google access has expired, so nothing can be saved yet. Reconnect before opening an editor.' }),
@@ -1706,13 +1727,14 @@ export class StuffApp extends HTMLElement {
 
   createReconnectBanner() {
     return element('div', { className: 'reauth-banner', attributes: { role: 'alert' } }, [
-      element('span', { text: 'Google access expired. Reconnect before editing or saving.' }),
+      element('span', { text: 'Google access expired. Your saved inventory is still available, but editing and sync are paused.' }),
       button('Reconnect', { className: '', onClick: async (event) => {
         const reconnect = event.currentTarget;
         reconnect.disabled = true;
         try {
           await this.auth.connect({ prompt: '', remember: preferences.rememberAccess });
           this.reconnectNeeded = false;
+          this.readOnly = !this.database?.writeEnabled;
           this.querySelectorAll('.reauth-banner').forEach((banner) => banner.remove());
           if (this.dialog?.titleElement?.textContent === 'Reconnect to edit') this.dialog.close();
           this.showToast('Google reconnected. You can edit and save again.');

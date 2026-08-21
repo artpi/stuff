@@ -72,6 +72,17 @@ export class GoogleAuthService extends EventTarget {
     return promise;
   }
 
+  async reconnectSilently({ remember = true } = {}) {
+    try {
+      await this.connect({ prompt: 'none', remember });
+      return true;
+    } catch {
+      // Google returns an error instead of displaying UI when a silent request
+      // cannot be completed. The caller can keep cached data available.
+      return false;
+    }
+  }
+
   disconnect() {
     tokenVault.clear();
     this.dispatchEvent(new Event('disconnected'));

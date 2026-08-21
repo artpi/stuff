@@ -371,13 +371,26 @@ export class StuffApp extends HTMLElement {
       actions.append(button('Browse read-only', { className: 'button secondary', onClick: () => this.activateDatabase(this.database, { readOnly: true }) }));
     }
     if (this.database.inspection.resourceIssues?.some((issue) => issue.code === 'unavailable')) {
-      actions.append(button('Authorize the existing stuff folder…', {
+      actions.append(button('Authorize missing folders…', {
         className: 'button secondary',
         onClick: async () => {
           try {
-            const selected = await this.picker.pickFolder();
-            if (!selected) return;
-            if (selected.id !== this.database.settings.get('root_folder_id')) throw new Error('Choose the existing stuff root folder referenced by this inventory, not a new parent folder.');
+            const unavailable = this.database.inspection.resourceIssues.filter((issue) => issue.code === 'unavailable');
+            for (const issue of unavailable) {
+              try {
+                await this.drive.getFile(issue.id);
+                continue;
+              } catch {
+                // A previous partial authorization may already have fixed this folder.
+              }
+              const selected = await this.picker.pickFolder({
+                title: `Authorize ${issue.label}`,
+                fileIds: [issue.id],
+              });
+              if (!selected) return;
+              if (selected.id !== issue.id) throw new Error(`Choose the existing ${issue.label} referenced by this inventory.`);
+              await this.drive.getFile(issue.id);
+            }
             await this.connectInventory(this.database.spreadsheetId);
           } catch (error) { this.handleError(error); }
         },

@@ -41,13 +41,15 @@ export class GooglePickerService {
     return this.#open({ title: 'Choose a stuff inventory', views: [view] });
   }
 
-  async pickFolder() {
+  async pickFolder({ title = 'Choose where to create the stuff folder', fileIds = [] } = {}) {
     await waitForPicker();
     const view = new globalThis.google.picker.DocsView(globalThis.google.picker.ViewId.FOLDERS)
       .setIncludeFolders(true)
       .setSelectFolderEnabled(true)
       .setMimeTypes(MIME.folder);
-    return this.#open({ title: 'Choose where to create the stuff folder', views: [view] });
+    if (fileIds.length) view.setFileIds(fileIds.join(','));
+    if (globalThis.google.picker.DocsViewMode?.LIST) view.setMode(globalThis.google.picker.DocsViewMode.LIST);
+    return this.#open({ title, views: [view] });
   }
 
   async pickImage() {

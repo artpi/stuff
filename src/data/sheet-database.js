@@ -245,18 +245,18 @@ export class StuffSheetDatabase extends EventTarget {
     await Promise.all(specifications.map(async ({ key, label }) => {
       const id = this.settings.get(key);
       if (!id) {
-        issues.push({ key, code: 'missing_id', message: `Settings is missing the Drive ID for the ${label}.` });
+        issues.push({ key, label, code: 'missing_id', message: `Settings is missing the Drive ID for the ${label}.` });
         return;
       }
       try {
         const file = await this.drive.getFile(id);
         metadata[key] = file;
-        if (file.trashed) issues.push({ key, code: 'trashed', message: `The ${label} is in Drive trash. Restore it before writing.` });
-        if (file.mimeType !== 'application/vnd.google-apps.folder') issues.push({ key, code: 'wrong_type', message: `The stored ${label} ID no longer points to a folder.` });
-        if (file.driveId) issues.push({ key, code: 'shared_drive', message: `The ${label} is inside a Shared Drive. V1 supports My Drive folders only.` });
-        if (file.capabilities?.canAddChildren === false) issues.push({ key, code: 'read_only', message: `This account cannot add files to the ${label}. Ask the owner for editor access.` });
+        if (file.trashed) issues.push({ key, label, id, code: 'trashed', message: `The ${label} is in Drive trash. Restore it before writing.` });
+        if (file.mimeType !== 'application/vnd.google-apps.folder') issues.push({ key, label, id, code: 'wrong_type', message: `The stored ${label} ID no longer points to a folder.` });
+        if (file.driveId) issues.push({ key, label, id, code: 'shared_drive', message: `The ${label} is inside a Shared Drive. V1 supports My Drive folders only.` });
+        if (file.capabilities?.canAddChildren === false) issues.push({ key, label, id, code: 'read_only', message: `This account cannot add files to the ${label}. Ask the owner for editor access.` });
       } catch (error) {
-        issues.push({ key, code: 'unavailable', message: `The ${label} is unavailable to this app/account. Re-authorize the shared stuff folder or ask the owner to share it as editor.`, error });
+        issues.push({ key, label, id, code: 'unavailable', message: `The ${label} is unavailable to this app/account. Authorize this exact folder with Google Picker.`, error });
       }
     }));
     return { metadata, issues };

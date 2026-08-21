@@ -109,6 +109,7 @@ The Sheet is a first-class interface rather than an opaque implementation detail
 - FR-010: The app must always create its own dedicated root rather than treating an arbitrary existing folder as the stuff root. `Photos`, `Thumbnails`, the `stuff — Inventory` spreadsheet, and V1 tabs/settings must be created inside that root so sharing applies only to inventory content. The app must resolve these resources by stable Drive IDs and continue working after they are renamed or moved within My Drive; changed access, trash state, or Shared Drive boundaries must trigger validation and recovery guidance.
 - FR-011: The owner must be able to share the root folder with another Google account as an editor.
 - FR-012: A collaborator must be able to select the shared spreadsheet with Google Picker and remember it on that device.
+- FR-012A: After selecting a shared inventory, the app must read its stored root, Photos, and Thumbnails folder IDs, test each folder directly, and use Google Picker to request explicit per-folder authorization for only the inaccessible IDs. A partially completed authorization flow must be safely resumable.
 - FR-013: V1 remembers one active inventory per browser profile. Switching requires the explicit `Disconnect inventory` action.
 
 ### 4.3 Search and browse (Priority: Critical)

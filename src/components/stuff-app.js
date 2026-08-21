@@ -1328,13 +1328,11 @@ export class StuffApp extends HTMLElement {
       }
       const dragHandle = canReorder ? button('⠿', { className: 'photo-drag-handle', label: 'Drag to reorder photo' }) : null;
       const figure = element('figure', {
-        className: `gallery-photo${isCover ? ' gallery-photo-primary' : ''}${canPreview ? ' gallery-photo-previewable' : ''}`,
+        className: `gallery-photo${isCover ? ' gallery-photo-primary' : ''}`,
         attributes: {
           draggable: canReorder ? 'true' : 'false',
-          'aria-label': canPreview ? `Preview ${entity.name} photo ${index + 1}` : `${isCover ? 'Cover photo' : `Photo ${index + 1}`}${canReorder ? '. Drag to reorder.' : ''}`,
+          'aria-label': `${isCover ? 'Cover photo' : `Photo ${index + 1}`}${canReorder ? '. Drag to reorder.' : ''}`,
           'aria-grabbed': 'false',
-          tabindex: canPreview ? '0' : null,
-          role: canPreview ? 'button' : null,
         },
         dataset: { photoId: photo.id },
       }, [
@@ -1343,15 +1341,25 @@ export class StuffApp extends HTMLElement {
         dragHandle,
         canEdit ? controls : null,
       ]);
-      if (canPreview) {
-        figure.addEventListener('click', () => this.openPhotoPreview(entity, photos, index));
+      let previewEnabled = false;
+      const enablePreview = () => {
+        if (!canPreview || previewEnabled || !image.isConnected) return;
+        previewEnabled = true;
+        figure.classList.add('gallery-photo-previewable');
+        figure.setAttribute('aria-label', `Preview ${entity.name} photo ${index + 1}`);
+        figure.setAttribute('tabindex', '0');
+        figure.setAttribute('role', 'button');
+        figure.addEventListener('click', () => {
+          if (!figure.classList.contains('gallery-photo-recovery')) this.openPhotoPreview(entity, photos, index);
+        });
         figure.addEventListener('keydown', (event) => {
+          if (figure.classList.contains('gallery-photo-recovery')) return;
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             this.openPhotoPreview(entity, photos, index);
           }
         });
-      }
+      };
       if (canReorder) {
         const dragTargetAt = (x, y) => {
           const target = document.elementFromPoint(x, y)?.closest?.('.gallery-photo');
@@ -1415,11 +1423,15 @@ export class StuffApp extends HTMLElement {
     await Promise.all(figures.map(async (figure, index) => {
       const photo = photos[index];
       const showUnavailable = () => {
-        const placeholder = element('div', { className: 'item-placeholder', text: 'Photo unavailable' });
+        const placeholder = element('div', { className: 'photo-recovery' }, [
+          element('strong', { text: 'Photo access needs recovery' }),
+          element('p', { text: 'This image was added directly in Google Drive. stuff has not been granted access to read it.' }),
+        ]);
         if (!this.readOnly && !this.demo && String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId) {
           const recover = button('Recover access', {
-            className: 'button secondary',
-            onClick: async () => {
+            className: 'button terracotta',
+            onClick: async (event) => {
+              event.stopPropagation();
               recover.disabled = true;
               try {
                 const recovered = await this.media.recoverDrivePhotoAccess(photo, (state) => this.showToast(`Recovering photo: ${Math.round(state.progress * 100)}%`, { timeout: 1200 }));
@@ -1436,15 +1448,22 @@ export class StuffApp extends HTMLElement {
           });
           placeholder.append(recover);
         }
-        figure.querySelector('img')?.replaceWith(placeholder);
+        figure.classList.add('gallery-photo-recovery');
+        figure.classList.remove('gallery-photo-previewable');
+        figure.removeAttribute('tabindex');
+        figure.removeAttribute('role');
+        figure.setAttribute('aria-label', 'Photo access needs recovery');
+        figure.replaceChildren(placeholder);
       };
       try {
         const url = await this.media.resolvePhotoUrl(photo, { thumbnail: false });
         const image = figure.querySelector('img');
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';
+          image.addEventListener('load', enablePreview, { once: true });
           image.src = url;
           image.addEventListener('error', showUnavailable, { once: true });
+          if (image.complete && image.naturalWidth) enablePreview();
         }
       } catch {
         showUnavailable();

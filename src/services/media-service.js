@@ -128,6 +128,7 @@ export class MediaService extends EventTarget {
     this.database = database;
     this.picker = picker;
     this.cache = new BlobUrlCache();
+    this.unavailablePhotoIds = new Set();
     this.activeUploads = 0;
     this.beforeUnload = (event) => {
       if (!this.activeUploads) return;
@@ -147,10 +148,16 @@ export class MediaService extends EventTarget {
     }
     const fileId = thumbnail && photo.thumbnailFileId ? photo.thumbnailFileId : photo.driveFileId;
     if (!fileId) return '';
+    if (this.unavailablePhotoIds.has(photo.id)) throw new Error('This Drive photo needs its access recovered.');
     const cached = this.cache.get(fileId);
     if (cached) return cached;
-    const blob = await this.drive.downloadFile(fileId);
-    return this.cache.set(fileId, blob);
+    try {
+      const blob = await this.drive.downloadFile(fileId);
+      return this.cache.set(fileId, blob);
+    } catch (error) {
+      this.unavailablePhotoIds.add(photo.id);
+      throw error;
+    }
   }
 
   async uploadFiles(files, entity, onProgress = () => {}) {
@@ -272,6 +279,7 @@ export class MediaService extends EventTarget {
       });
       onProgress({ stage: 'linking', progress: 0.97 });
       const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
+      this.unavailablePhotoIds.delete(photo.id);
       onProgress({ stage: 'complete', progress: 1 });
       return recovered;
     } finally {

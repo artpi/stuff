@@ -129,6 +129,7 @@ export class MediaService extends EventTarget {
     this.picker = picker;
     this.cache = new BlobUrlCache();
     this.unavailablePhotoIds = new Set();
+    this.photoAccessGenerations = new Map();
     this.activeUploads = 0;
     this.beforeUnload = (event) => {
       if (!this.activeUploads) return;
@@ -149,13 +150,14 @@ export class MediaService extends EventTarget {
     const fileId = thumbnail && photo.thumbnailFileId ? photo.thumbnailFileId : photo.driveFileId;
     if (!fileId) return '';
     if (this.unavailablePhotoIds.has(photo.id)) throw new Error('This Drive photo needs its access recovered.');
+    const generation = this.photoAccessGenerations.get(photo.id) || 0;
     const cached = this.cache.get(fileId);
     if (cached) return cached;
     try {
       const blob = await this.drive.downloadFile(fileId);
       return this.cache.set(fileId, blob);
     } catch (error) {
-      this.unavailablePhotoIds.add(photo.id);
+      if ((this.photoAccessGenerations.get(photo.id) || 0) === generation) this.unavailablePhotoIds.add(photo.id);
       throw error;
     }
   }
@@ -268,27 +270,19 @@ export class MediaService extends EventTarget {
     this.activeUploads += 1;
     this.dispatchEvent(new CustomEvent('uploadstatechange', { detail: { active: this.activeUploads } }));
     try {
-      onProgress({ stage: 'copying', progress: 0.1 });
-      const full = await this.drive.copyFile(selection.id, {
-        name: `${photo.id}-${createUuid()}-${selection.name}`,
-        parentId: this.database.settings.get('photos_folder_id'),
-      });
-      onProgress({ stage: 'downloading', progress: 0.3 });
-      const original = await this.drive.downloadFile(full.id);
-      onProgress({ stage: 'thumbnail', progress: 0.45 });
+      onProgress({ stage: 'downloading', progress: 0.15 });
+      const original = await this.drive.downloadFile(selection.id);
+      onProgress({ stage: 'thumbnail', progress: 0.35 });
       const thumbnail = await createThumbnail(original);
       const thumb = await this.drive.resumableUpload(thumbnail, {
         name: `${photo.id}-${createUuid()}-thumb.jpg`,
         parentId: this.database.settings.get('thumbnails_folder_id'),
-        onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.45 + progress * 0.5 }),
+        onProgress: (progress) => onProgress({ stage: 'thumbnail', progress: 0.35 + progress * 0.6 }),
       });
       onProgress({ stage: 'linking', progress: 0.97 });
-      const recovered = await this.database.replaceDrivePhotoFiles(photo.id, {
-        driveFileId: full.id,
-        thumbnailFileId: thumb.id,
-        url: full.webViewLink || '',
-      });
+      const recovered = await this.database.replaceDrivePhotoThumbnail(photo.id, thumb.id);
       this.unavailablePhotoIds.delete(photo.id);
+      this.photoAccessGenerations.set(photo.id, (this.photoAccessGenerations.get(photo.id) || 0) + 1);
       onProgress({ stage: 'complete', progress: 1 });
       return recovered;
     } finally {

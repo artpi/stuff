@@ -24,7 +24,7 @@ function loadImage(blob) {
 }
 
 function mediaLog(event, details = {}, level = 'info') {
-  globalThis.console?.[level]?.(`[stuff:media] ${event}`, details);
+  globalThis.console?.[level]?.(`[stuff:media] ${event} ${JSON.stringify(details)}`);
 }
 
 export async function createThumbnail(file, maximumEdge = 480) {

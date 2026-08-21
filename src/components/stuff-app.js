@@ -2,15 +2,15 @@ import './stuff-dialog.js';
 import './stuff-item-card.js';
 import './stuff-toast-region.js';
 
-import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.9';
+import { APP_VERSION, GOOGLE_CONFIG, isGoogleConfigured } from '../config.js?v=0.1.10';
 import { DemoDatabase, DemoMediaService } from '../data/demo-database.js';
-import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.9';
+import { EditConflictError, StuffSheetDatabase } from '../data/sheet-database.js?v=0.1.10';
 import { SearchIndex } from '../search/search-index.js';
 import { DriveClient } from '../services/drive-client.js';
 import { GoogleApiClient, GoogleApiError, friendlyGoogleError } from '../services/google-api.js';
 import { GoogleAuthService } from '../services/google-auth.js';
 import { GooglePickerService } from '../services/google-picker.js';
-import { MediaService } from '../services/media-service.js?v=0.1.9';
+import { MediaService } from '../services/media-service.js?v=0.1.10';
 import { SheetsClient } from '../services/sheets-client.js';
 import { inventorySnapshotCache, preferences, tokenVault } from '../services/storage.js';
 import { debounce, humanFileSize, isIos, moveIdToIndex, normalizeSearchText, parseTags } from '../utils.js';
@@ -1426,14 +1426,14 @@ export class StuffApp extends HTMLElement {
         const drivePhoto = String(photo.source).toLocaleLowerCase('en-US') === 'drive' && photo.driveFileId;
         const decodeFailed = error?.reason === 'image_decode';
         const recoveryNeeded = drivePhoto && !decodeFailed;
-        globalThis.console?.warn?.('[stuff:gallery] photo unavailable', {
+        globalThis.console?.warn?.(`[stuff:gallery] photo unavailable ${JSON.stringify({
           photoId: photo.id,
           driveFileId: photo.driveFileId,
           thumbnailFileId: photo.thumbnailFileId,
           recoveryNeeded,
           decodeFailed,
           error: { name: error?.name, message: error?.message, status: error?.status, reason: error?.reason },
-        });
+        })}`);
         const placeholder = element('div', { className: 'photo-recovery' }, [
           element('strong', { text: recoveryNeeded ? 'Photo access needs recovery' : 'Photo could not be displayed' }),
           element('p', {
@@ -1478,11 +1478,13 @@ export class StuffApp extends HTMLElement {
         if (image?.isConnected) {
           image.referrerPolicy = 'no-referrer';
           image.addEventListener('load', enablePreview, { once: true });
-          image.addEventListener('load', () => globalThis.console?.info?.('[stuff:gallery] photo rendered', {
+          image.addEventListener('load', () => globalThis.console?.info?.(`[stuff:gallery] photo rendered ${JSON.stringify({
             photoId: photo.id,
             driveFileId: photo.driveFileId,
             thumbnailFileId: photo.thumbnailFileId,
-          }), { once: true });
+            naturalWidth: image.naturalWidth,
+            naturalHeight: image.naturalHeight,
+          })}`), { once: true });
           image.src = url;
           image.addEventListener('error', () => showUnavailable({ reason: 'image_decode' }), { once: true });
           if (image.complete && image.naturalWidth) enablePreview();

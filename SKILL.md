@@ -172,12 +172,12 @@ The website uses the restricted `drive.file` OAuth scope. An image placed direct
 
 When the website reports **Photo access needs recovery**, use its **Recover access** action. The user must select the highlighted original image in Google Picker. Recovery then:
 
-1. copies the selected original into the `photos_folder_id` folder as an app-owned file, leaving the directly uploaded source untouched;
+1. grants the app durable `drive.file` access to the selected, already-referenced original while preserving its `Drive File ID`;
 2. creates a new approximately 480-pixel JPEG thumbnail in `thumbnails_folder_id`;
-3. updates the existing `Photos` row with the copied original's `Drive File ID`, the new `Thumbnail File ID`, and the copied file URL;
+3. updates the existing `Photos` row with the new `Thumbnail File ID` only;
 4. preserves the photo relationship's `ID`, entity, order, description, and creation time.
 
-Recovery is per photo. Every directly uploaded photo with this problem must be recovered separately through Picker; recovering one photo or selecting a folder does not authorize the others. After each recovery, verify that both file IDs resolve and that the photo still displays after a full page reload. Do not manually substitute guessed Drive IDs or claim a batch is repaired without checking every affected row.
+Recovery is per photo. Every directly uploaded photo with this problem must be recovered separately through Picker; recovering one photo or selecting a folder does not authorize the others. After each recovery, verify that the original `Drive File ID` is unchanged and readable, that the `Thumbnail File ID` was replaced and resolves, and that the photo still displays after a full page reload. Do not manually substitute guessed Drive IDs or claim a batch is repaired without checking every affected row.
 
 ### Reorder or remove photos
 

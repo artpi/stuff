@@ -54,3 +54,25 @@ test('recovery preserves the Picker-authorized original and replaces only its th
     globalThis.document = previousDocument;
   }
 });
+
+test('a failed old thumbnail does not block a replacement file for the same photo', async () => {
+  const service = new MediaService({
+    picker: {},
+    database: {},
+    drive: {
+      downloadFile: async (id) => {
+        if (id === 'old-thumb') throw Object.assign(new Error('not found'), { status: 404, reason: 'file_unavailable' });
+        return new Blob(['replacement'], { type: 'image/jpeg' });
+      },
+    },
+  });
+  const oldPhoto = { id: 'photo-1', source: 'Drive', driveFileId: 'original-1', thumbnailFileId: 'old-thumb' };
+  const recoveredPhoto = { ...oldPhoto, thumbnailFileId: 'new-thumb' };
+
+  try {
+    await assert.rejects(service.resolvePhotoUrl(oldPhoto), /not found/);
+    assert.match(await service.resolvePhotoUrl(recoveredPhoto), /^blob:/);
+  } finally {
+    service.destroy();
+  }
+});

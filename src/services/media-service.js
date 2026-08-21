@@ -132,7 +132,7 @@ export class MediaService extends EventTarget {
     this.database = database;
     this.picker = picker;
     this.cache = new BlobUrlCache();
-    this.unavailablePhotoIds = new Set();
+    this.unavailableFileIds = new Set();
     this.photoAccessGenerations = new Map();
     this.activeUploads = 0;
     this.beforeUnload = (event) => {
@@ -154,7 +154,7 @@ export class MediaService extends EventTarget {
     const fileId = thumbnail && photo.thumbnailFileId ? photo.thumbnailFileId : photo.driveFileId;
     if (!fileId) return '';
     mediaLog('resolve:start', { photoId: photo.id, fileId, thumbnail });
-    if (this.unavailablePhotoIds.has(photo.id)) {
+    if (this.unavailableFileIds.has(fileId)) {
       mediaLog('resolve:blocked-by-known-failure', { photoId: photo.id, fileId, thumbnail }, 'warn');
       throw new Error('This Drive photo needs its access recovered.');
     }
@@ -169,7 +169,7 @@ export class MediaService extends EventTarget {
       mediaLog('resolve:downloaded', { photoId: photo.id, fileId, thumbnail, type: blob.type, size: blob.size });
       return this.cache.set(fileId, blob);
     } catch (error) {
-      if ((this.photoAccessGenerations.get(photo.id) || 0) === generation) this.unavailablePhotoIds.add(photo.id);
+      if ((this.photoAccessGenerations.get(photo.id) || 0) === generation) this.unavailableFileIds.add(fileId);
       mediaLog('resolve:failed', {
         photoId: photo.id,
         fileId,
@@ -316,7 +316,9 @@ export class MediaService extends EventTarget {
       });
       this.cache.set(selection.id, original);
       this.cache.set(thumb.id, thumbnail);
-      this.unavailablePhotoIds.delete(photo.id);
+      this.unavailableFileIds.delete(photo.driveFileId);
+      this.unavailableFileIds.delete(photo.thumbnailFileId);
+      this.unavailableFileIds.delete(thumb.id);
       this.photoAccessGenerations.set(photo.id, (this.photoAccessGenerations.get(photo.id) || 0) + 1);
       mediaLog('recovery:complete', { photoId: photo.id, driveFileId: selection.id, thumbnailFileId: thumb.id });
       onProgress({ stage: 'complete', progress: 1 });
